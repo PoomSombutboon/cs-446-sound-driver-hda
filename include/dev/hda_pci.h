@@ -32,6 +32,11 @@
 int hda_pci_init(struct naut_info *naut);
 int hda_pci_deinit();
 
+#ifndef NAUT_CONFIG_DEBUG_HDA_PCI
+#undef DEBUG_PRINT
+#define DEBUG_PRINT(fmt, args...)
+#endif
+
 #define INFO(fmt, args...) INFO_PRINT("hda_pci: " fmt, ##args)
 #define DEBUG(fmt, args...) DEBUG_PRINT("hda_pci: " fmt, ##args)
 #define ERROR(fmt, args...) ERROR_PRINT("hda_pci: " fmt, ##args)
