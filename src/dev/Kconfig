@@ -273,6 +273,13 @@ config DEBUG_VESA
     help
        Add debugging output from VESA driver
 
+config HDA_PCI
+    bool "HDA PCI Driver (Intel High Definition Audio)"
+    depends on X86_64_HOST
+    default n
+    help
+      Adds the basic HDA audio driver
+
 endmenu
 
     
