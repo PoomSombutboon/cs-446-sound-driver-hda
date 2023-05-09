@@ -27,16 +27,73 @@
 #include "hda_pci_internal.h"
 #include <dev/hda_pci.h>
 #include <dev/pci.h>
+#include <nautilus/idt.h>
+#include <nautilus/irq.h>
 #include <nautilus/list.h>
 #include <nautilus/mm.h>
 #include <nautilus/nautilus.h>
+#include <nautilus/sounddev.h>
 #include <nautilus/spinlock.h>
+
+// ========== TEMPORARY FUNCTION ==========
+// TODO: REMOVE AFTER
+
+static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) { return 0; }
+
+int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[]) {
+  return 0;
+}
+
+struct nk_sound_dev_stream *
+hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
+                struct nk_sound_dev_params *params) {
+  struct nk_sound_dev_stream *ret;
+  return ret;
+}
+
+int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
+  return 0;
+}
+
+int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
+                        uint8_t *src, uint64_t len,
+                        void (*callback)(nk_sound_dev_status_t status,
+                                         void *context),
+                        void *context) {
+  return 0;
+}
+int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
+                         uint8_t *dst, uint64_t len,
+                         void (*callback)(nk_sound_dev_status_t status,
+                                          void *context),
+                         void *context) {
+  return 0;
+}
+
+int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
+                          struct nk_sound_dev_params *p) {
+  return 0;
+}
+
+// ========== GLOBAL FIELDS ==========
 
 // for protection of global state in the driver
 static spinlock_t global_lock;
 
 // list of all HDA devices
 static struct list_head dev_list;
+
+// sounddev interface
+static struct nk_sound_dev_int ops = {
+    .get_avaiable_modes = hda_get_avaiable_modes,
+    .open_stream = hda_open_stream,
+    .close_stream = hda_close_stream,
+    .write_to_stream = hda_write_to_stream,
+    .read_from_stream = hda_read_from_stream,
+    .get_stream_params = hda_get_stream_params,
+};
+
+// ========== METHODS ==========
 
 // search for all HDA devices on the PCI bus
 static int discover_devices(struct pci_info *pci) {
@@ -156,6 +213,7 @@ static int discover_devices(struct pci_info *pci) {
 
         if (hdev->method == NONE) {
           ERROR("Device has no register access method\n");
+          panic("Device has no register access method\n");
           return -1;
         }
 
@@ -179,6 +237,116 @@ static int discover_devices(struct pci_info *pci) {
   return 0;
 }
 
+static int configure_msi_interrupts(struct hda_pci_dev *dev) {
+  DEBUG("Configuring interrupts using MSI for device %u:%u.%u\n",
+        dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+
+  if (dev->pci_dev->msi.type == PCI_MSI_NONE) {
+    ERROR("Device %u:%u.%u does not support MSI\n");
+    return -1;
+  }
+
+  uint64_t num_vecs = dev->pci_dev->msi.num_vectors_needed;
+  uint64_t base_vec;
+
+  if (idt_find_and_reserve_range(num_vecs, 1, (ulong_t *)&base_vec)) {
+    ERROR("Unabled to reserve %d interrupt table slots for device %u:%u.%u\n",
+          num_vecs, dev->pci_dev->bus->num, dev->pci_dev->num,
+          dev->pci_dev->fun);
+    return -1;
+  }
+
+  if (pci_dev_enable_msi(dev->pci_dev, base_vec, num_vecs, 0)) {
+    ERROR("Failed to enable MSI on device %u:%u.%u\n", dev->pci_dev->bus->num,
+          dev->pci_dev->num, dev->pci_dev->fun);
+    return -1;
+  }
+
+  for (uint64_t i = base_vec; i < base_vec + num_vecs; i++) {
+    if (register_int_handler(i, handler, dev)) {
+      ERROR("Failed to register interrupt %d on device %u:%u.%u\n", i,
+            dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+      return -1;
+    }
+    DEBUG("Registered interrupt %d for device %u:%u.%u\n", i,
+          dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+  }
+
+  for (uint64_t i = base_vec; i < base_vec + num_vecs; i++) {
+    if (pci_dev_unmask_msi(dev->pci_dev, i)) {
+      ERROR("Failed to unmask interrupt %d on device %u:%u.%u\n", i,
+            dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+      return -1;
+    }
+    DEBUG("Unmasked interrupt %d for device %u:%u.%u\n", i,
+          dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+  }
+
+  DEBUG("Enabled MSI interrupt for vectors[%d, %d)\n", base_vec,
+        base_vec + num_vecs);
+
+  return 0;
+}
+
+static int bringup_device(struct hda_pci_dev *dev) {
+  DEBUG("Bringing up device %u:%u.%u. Starting Address is: %x\n",
+        dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun,
+        dev->mem_start);
+
+  if (configure_msi_interrupts(dev)) {
+    ERROR("Failed to configure MSI interrupts");
+    return -1;
+  }
+
+  // make sure pci config space command register is acceptable
+  uint16_t cmd = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_COMMAND_OFFSET);
+  cmd &= ~0x0400; // turn off interrupt disable
+  cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
+  DEBUG("Writing PCI command register to 0x%x\n", cmd);
+  pci_dev_cfg_writew(dev->pci_dev, 0x4, HDA_PCI_COMMAND_OFFSET);
+
+  uint16_t status = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_STATUS_OFFSET);
+  DEBUG("Reading PCI status register as 0x%x\n", status);
+
+  // TODO: Initialize device...
+
+  return 0;
+}
+
+static int bringup_devices() {
+
+  DEBUG("Bringing up HDA devices\n");
+
+  // number of devices (used to assign names)
+  int num_devs = 0;
+
+  struct list_head *curdev, tx_node;
+  list_for_each(curdev, &(dev_list)) {
+    struct hda_pci_dev *dev = list_entry(curdev, struct hda_pci_dev, hda_node);
+
+    char buf[80];
+    snprintf(buf, 80, "hda%d", num_devs++);
+
+    if (bringup_device(dev)) {
+      ERROR("Failed to bring up HDA device %s (%u:%u.%u)\n", buf,
+            dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+      return -1;
+    }
+
+    dev->nk_dev = nk_sound_dev_register(buf, 0, &ops, dev);
+    if (!dev->nk_dev) {
+      ERROR("Failed to register HDA device %s (%u:%u.%u)\n", buf,
+            dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+      return -1;
+    }
+
+    DEBUG("Brought up and registered HDA device %s (%u:%u.%u)\n", buf,
+          dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
+  }
+
+  return 0;
+}
+
 // called by init.c to initialize the Intel HDA driver
 int hda_pci_init(struct naut_info *naut) {
   INFO("init\n");
@@ -190,8 +358,7 @@ int hda_pci_init(struct naut_info *naut) {
     return -1;
   }
 
-  // TODO: return bringup_devices();
-  return 0;
+  return bringup_devices();
 }
 
 // deinitialize the Intel HDA driver
