@@ -76,9 +76,102 @@ static int discover_devices(struct pci_info *pci) {
         }
 
         memset(hdev, 0, sizeof(*hdev));
+        // hdev->pci_intr = cfg->dev_cfg.intr_pin;
+        // hdev->intr_vec = map_pci_irq_to_vec(bus, pdev);
+
         spinlock_init(&hdev->lock);
 
-        // TODO: BAR configuration
+        // pci configuration space consists of up to six 32-bit base address
+        // registers for each device
+        // however, we only expect one bar to exist: it will be memory-mapped
+        // and will be at bar 0
+        hdev->method = NONE;
+        for (int i = 0; i < 6; i++) {
+          uint32_t bar = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
+
+          DEBUG("bar %d: 0x%0x\n", i, bar);
+
+          if (i >= 1 && bar != 0) {
+            DEBUG("Not expecting this to be a non-empty bar...\n");
+          }
+
+          // if pci bars are memory-mapped (bit 0 is 0x0), make sure they
+          // are only 32 bits wide
+          // if type (bits 1 and 2) is 0x0, base register is 32 bits wide
+          // if type is 0x2, bar is 64 bits wide
+          if (!(bar & 0x1)) {
+            uint8_t mem_bar_type = (bar & 0x6) >> 1;
+            if (mem_bar_type != 0) {
+              ERROR("Cannot handle memory bar type 0x%x\n", mem_bar_type);
+              return -1;
+            }
+          }
+
+          // to determine amonut of address space needed by device
+          // 1. write a value of all 1's to the register then read it back
+          // 2. mask the information bits
+          // 3. perform a bitwise NOT and then increment result by 1
+
+          // 1. write a value of all 1's to the register then read it back
+          pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, 0xffffffff);
+          uint32_t size = pci_cfg_readl(bus->num, pdev->num, 0, 0x10 + i * 4);
+
+          // 2. mask the information bits
+          if (bar & 0x1) {
+            // i/o
+            size &= 0xfffffffc;
+          } else {
+            // memory
+            size &= 0xfffffff0;
+          }
+
+          // 3. perform a bitwise NOT and then increment result by 1
+          size = ~size;
+          size++;
+
+          // put back the original bar value
+          pci_cfg_writel(bus->num, pdev->num, 0, 0x10 + i * 4, bar);
+
+          // skip if size of bar is 0 (non-existent)
+          if (!size) {
+            continue;
+          }
+
+          // make sure no other bar exists
+          if (size > 0 && i >= 1) {
+            ERROR("unexpected hda pci bar with size > 0!\n");
+            return -1;
+          }
+
+          if (bar & 0x1) {
+            hdev->ioport_start = bar & 0xffffffc0;
+            hdev->ioport_end = hdev->ioport_start + size;
+            hdev->method = IO;
+          } else {
+            hdev->mem_start = bar & 0xffffffc0;
+            hdev->mem_end = hdev->mem_start + size;
+            hdev->method = MEMORY;
+          }
+        }
+
+        if (hdev->method == NONE) {
+          ERROR("Device has no register access method\n");
+          return -1;
+        }
+
+        hdev->pci_dev = pdev;
+
+        INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
+             "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
+             "mem_end=%p access_method=%s\n",
+             bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
+             hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
+             hdev->mem_end,
+             hdev->method == IO       ? "IO"
+             : hdev->method == MEMORY ? "MEMORY"
+                                      : "NONE");
+
+        list_add(&hdev->hda_node, &dev_list);
       }
     }
   }
