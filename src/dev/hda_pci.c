@@ -24,7 +24,6 @@
  * redistribute, and modify it as specified in the file "LICENSE.txt".
  */
 
-#include "hda_pci_internal.h"
 #include <dev/hda_pci.h>
 #include <dev/pci.h>
 #include <nautilus/cpu.h>
@@ -35,6 +34,8 @@
 #include <nautilus/nautilus.h>
 #include <nautilus/sounddev.h>
 #include <nautilus/spinlock.h>
+
+#include "hda_pci_internal.h"
 
 // ========== TEMPORARY FUNCTION ==========
 // TODO: REMOVE AFTER
@@ -101,7 +102,10 @@ static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
   uint32_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    __asm__ __volatile__("movl (%1), %0"
+                         : "=r"(result)
+                         : "r"(addr)
+                         : "memory");
   } else {
     result = inl(dev->ioport_start + offset);
   }
@@ -114,7 +118,10 @@ static inline uint16_t hda_pci_read_regw(struct hda_pci_dev *dev,
   uint16_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    __asm__ __volatile__("movw (%1), %0"
+                         : "=r"(result)
+                         : "r"(addr)
+                         : "memory");
   } else {
     result = inw(dev->ioport_start + offset);
   }
@@ -127,7 +134,10 @@ static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
   uint8_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+    __asm__ __volatile__("movb (%1), %0"
+                         : "=r"(result)
+                         : "r"(addr)
+                         : "memory");
   } else {
     result = inb(dev->ioport_start + offset);
   }
@@ -140,7 +150,10 @@ static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writel 0x%08x with 0x%08x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    __asm__ __volatile__("movl %1, (%0)"
+                         :
+                         : "r"(addr), "r"(data)
+                         : "memory");
   } else {
     outl(data, dev->ioport_start + offset);
   }
@@ -151,7 +164,10 @@ static inline void hda_pci_write_regw(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writew 0x%08x with 0x%04x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    __asm__ __volatile__("movw %1, (%0)"
+                         :
+                         : "r"(addr), "r"(data)
+                         : "memory");
   } else {
     outw(data, dev->ioport_start + offset);
   }
@@ -162,7 +178,10 @@ static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writeb 0x%08x with 0x%02x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+    __asm__ __volatile__("movb %1, (%0)"
+                         :
+                         : "r"(addr), "r"(data)
+                         : "memory");
   } else {
     outb(data, dev->ioport_start + offset);
   }
@@ -290,15 +309,16 @@ static int discover_devices(struct pci_info *pci) {
 
         hdev->pci_dev = pdev;
 
-        INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
-             "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
-             "mem_end=%p access_method=%s\n",
-             bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
-             hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
-             hdev->mem_end,
-             hdev->method == IO       ? "IO"
-             : hdev->method == MEMORY ? "MEMORY"
-                                      : "NONE");
+        INFO(
+            "Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
+            "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
+            "mem_end=%p access_method=%s\n",
+            bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
+            hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
+            hdev->mem_end,
+            hdev->method == IO       ? "IO"
+            : hdev->method == MEMORY ? "MEMORY"
+                                     : "NONE");
 
         list_add(&hdev->hda_node, &dev_list);
       }
@@ -453,7 +473,7 @@ static int setup_corb(struct hda_pci_dev *d) {
 
   // as specified by the Intel HDA specification, write pointer is initialized
   // to 0; the first write will occur at WP = 1 (offset 4 bytes)
-  // See specification, revision 1.0a, page 63
+  // see specification, revision 1.0a, page 63
   d->corb.cur_write = 0;
 
   // reset CORB read pointer; to reset:
@@ -495,6 +515,78 @@ static int setup_corb(struct hda_pci_dev *d) {
   return 0;
 }
 
+// the steps are defined by the specification, revision 1.0a, section 4.4.1.3 on
+// "Initializing the RIRB", page 68
+static int setup_rirb(struct hda_pci_dev *d) {
+  rirbctl_t rc;
+  rirbsize_t rs;
+
+  // stop RIRB by turning off DMA
+  rc.val = hda_pci_read_regb(d, RIRBCTL);
+  rc.rirbdmaen = 0;
+  hda_pci_write_regb(d, RIRBCTL, rc.val);
+  DEBUG("RIRB turned off\n");
+
+  // determine RIRB size and allocate RIRB buffer in memory
+  rs.val = hda_pci_read_regb(d, RIRBSIZE);
+  if (RIRBSIZECAP_HAS_256(rs)) {
+    d->rirb.size = 256;
+    rs.rirbsize = 2;
+  } else if (RIRBSIZECAP_HAS_16(rs)) {
+    d->rirb.size = 16;
+    rs.rirbsize = 1;
+  } else if (RIRBSIZECAP_HAS_2(rs)) {
+    d->rirb.size = 2;
+    rs.rirbsize = 0;
+  } else {
+    ERROR("Cannot determine RIRB available sizes from CODEC\n");
+    return -1;
+  }
+  hda_pci_write_regb(d, RIRBSIZE, rs.val);
+  DEBUG("RIRB sizeset to %d\n", d->rirb.size);
+
+  // update RIRBUBASE and RRIRBLBASE registers
+  rirbubase_t ru = (uint32_t)(((uint64_t)d->rirb.buf) >> 32);
+  rirblbase_t rl = (uint32_t)(((uint64_t)d->rirb.buf));
+  hda_pci_write_regl(d, RIRBUBASE, ru);
+  hda_pci_write_regl(d, RIRBLBASE, rl);
+  DEBUG("RIRB DMA address set to %x:%x (%p)\n", ru, rl, d->rirb.buf);
+
+  // since RIRB write pointer is inittialized to point to 0th entry, its
+  // read pointer set to 0. note that the offset for each response is 8 bytes
+  d->rirb.cur_read = 0;
+
+  // reset RIRB write pointer and set RIRB write pointer to point to 0th entry
+  rirbwp_t wp;
+  wp.val = hda_pci_read_regw(d, RIRBWP);
+  wp.rirbwprst = 1;
+  wp.rirbwp = 0;
+  hda_pci_write_regw(d, RIRBWP, wp.val);
+  DEBUG("RIRB write pointer has been reset and configured\n");
+
+  // configure RIRB Intertupt Count to set the number of responses written to
+  // RIRB before the controller raise an interupt (see specificaition,
+  // revision 1.0a, page 67)
+  // RIRB Interupt Count is set such that the controller will sent an interupt
+  // after the number of reponses written to RIRB is equal to RIRB's size
+  rintcnt_t ri;
+  ri.val = hda_pci_read_regw(d, RINTCNT);
+  ri.rintcnt = d->rirb.size - 1;
+  hda_pci_write_regw(d, RINTCNT, ri.val);
+  DEBUG("RIRB interrupt count has been set to %d\n", d->rirb.size - 1);
+
+  // start RIRB and enable interupts when the response is overrun (RIRBOIC) and 
+  // when the number of responses is equal to the size of RIRB (RINTCTL)
+  rc.val = hda_pci_read_regb(d, RIRBCTL);
+  rc.rirbdmaen = 1;
+  rc.rirboic = 1;
+  rc.rintctl = 1;
+  hda_pci_write_regb(d, RIRBCTL, rc.val);
+  DEBUG("RIRB turned on\n");
+
+  return 0;
+}
+
 static int bringup_device(struct hda_pci_dev *dev) {
   DEBUG("Bringing up device %u:%u.%u. Starting Address is: %x\n",
         dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun,
@@ -507,8 +599,8 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // make sure pci config space command register is acceptable
   uint16_t cmd = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_COMMAND_OFFSET);
-  cmd &= ~0x0400; // turn off interrupt disable
-  cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
+  cmd &= ~0x0400;  // turn off interrupt disable
+  cmd |= 0x7;      // make sure bus master, memory, and io space are enabled
   DEBUG("Writing PCI command register to 0x%x\n", cmd);
   pci_dev_cfg_writew(dev->pci_dev, HDA_PCI_COMMAND_OFFSET, cmd);
 
@@ -536,8 +628,14 @@ static int bringup_device(struct hda_pci_dev *dev) {
   }
   DEBUG("CORB setup completed\n");
 
+  DEBUG("Initate RIRB setup\n");
+  if (setup_rirb(dev)) {
+    ERROR("RIRB setup failed\n");
+    return -1;
+  }
+  DEBUG("RIRB setup completed\n");
+
   // TODO:
-  // setup_rirb(dev);
   // setup_interrupts(dev);
   // setup_codecs(dev);
 
@@ -545,7 +643,6 @@ static int bringup_device(struct hda_pci_dev *dev) {
 }
 
 static int bringup_devices() {
-
   DEBUG("Bringing up HDA devices\n");
 
   // number of devices (used to assign names)

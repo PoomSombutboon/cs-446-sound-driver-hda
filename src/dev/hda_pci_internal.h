@@ -48,7 +48,7 @@ typedef union {
 // Specification: section 3.3.18, page 36
 #define CORBLBASE 0x40
 #define CORBLBASE_LEN 0x4
-typedef uint32_t corblbase_t; // has to be 128-byte alignment
+typedef uint32_t corblbase_t;  // has to be 128-byte alignment
 
 // CORBUBASE: CORB Upper Base Address
 // Specification: section 3.3.19, page 36
@@ -102,8 +102,9 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t corbsize : 2;
-#define CORBSIZE_DECODE(x)                                                     \
-  ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 : x->corbsize == 2 : 256 : 0))
+#define CORBSIZE_DECODE(x)                       \
+  ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 \
+                                            : x->corbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t corbszcap : 4;
 #define CORBSIZECAP_HAS_2(x) (!!(x.corbszcap & 0x1))
@@ -111,6 +112,74 @@ typedef union {
 #define CORBSIZECAP_HAS_256(x) (!!(x.corbszcap & 0x4))
   };
 } __attribute__((packed)) corbsize_t;
+
+// RIRBLBASE - RIRB Lower Base Address
+// Specification: section 3.3.25, page 39
+#define RIRBLBASE 0x50
+#define RIRBLBASE_LEN 0x4
+typedef uint32_t rirblbase_t;  // has to be 128-byte alignment
+
+// RIRBUBASE - RIRB Upper Base Address
+// Specification: section 3.3.26, page 39
+#define RIRBUBASE 0x54
+#define RIRBUBASE_LEN 0x4
+typedef uint32_t rirbubase_t;
+
+// RIRBWP - RIRB Write Pointer
+// specification: section 3.3.27, page 39
+#define RIRBWP 0x58
+#define RIRBWP_LEN 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t rirbwp;
+    uint8_t res : 7;
+    uint8_t rirbwprst : 1;
+  };
+} __attribute__((packed)) rirbwp_t;
+
+// RINTCNT - RIRB Response Interupt Count
+// specification: section 3.3.28, page 40
+#define RINTCNT 0x5a
+#define RINTCNT_LEN 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t rintcnt;  // 1=1, 2=2, but 0=256
+    uint8_t res;
+  };
+} __attribute__((packed)) rintcnt_t;
+
+// RIRBCTL - RIRB Control
+// Specification: section 3.3.29, page 40
+#define RIRBCTL 0x5c
+#define RIRBCTL_LEN 0x1
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t rintctl : 1;
+    uint8_t rirbdmaen : 1;
+    uint8_t rirboic : 1;
+  };
+} __attribute__((packed)) rirbctl_t;
+
+// RIRBSIZE - RIRB Size
+// Specification: section 3.3.31, page 41
+#define RIRBSIZE 0x5e
+#define RIRBSIZE_LEN 0x1
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t rirbsize : 2;
+#define RIRBSIZE_DECODE(x) ((x->rirbsize == 0 ? 2 : x->rirsize == 1 ? 16 \
+                                                                    : x->rirbsize == 2 : 256 : 0))
+    uint8_t res : 2;
+    uint8_t rirbszcap : 4;
+#define RIRBSIZECAP_HAS_2(x) (!!(x.rirbszcap & 0x1))
+#define RIRBSIZECAP_HAS_16(x) (!!(x.rirbszcap & 0x2))
+#define RIRBSIZECAP_HAS_256(x) (!!(x.rirbszcap & 0x4))
+  };
+} __attribute__((packed)) rirbsize_t;
 
 // ========== CODEC COMMAND AND CONTROL ==========
 
@@ -173,7 +242,9 @@ struct hda_pci_dev {
   uint8_t intr_vec;
 
   // identifier to determine if pci device is mmio or pmio
-  enum { NONE, IO, MEMORY } method;
+  enum { NONE,
+         IO,
+         MEMORY } method;
 
   // pci registers region: only EITHER ioport or mem will be defined
   uint16_t ioport_start;
