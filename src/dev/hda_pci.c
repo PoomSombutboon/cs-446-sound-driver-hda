@@ -587,6 +587,18 @@ static int setup_rirb(struct hda_pci_dev *d) {
   return 0;
 }
 
+static void setup_interrupts(struct hda_pci_dev *d)
+{
+    // set all bits to ones to enable global, controller, and stream interrupts
+    intctl_t c;
+    c.val = 0;
+    c.cie = 1;
+    c.gie = 1;
+    c.sie = -1;
+    hda_pci_write_regl(d, INTCTL, c.val);
+    DEBUG("Enable interupts: global, controller, and streams\n");
+}
+
 static int bringup_device(struct hda_pci_dev *dev) {
   DEBUG("Bringing up device %u:%u.%u. Starting Address is: %x\n",
         dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun,
@@ -635,8 +647,11 @@ static int bringup_device(struct hda_pci_dev *dev) {
   }
   DEBUG("RIRB setup completed\n");
 
+  DEBUG("Initiate interrupts setup\n");
+  setup_interrupts(dev);
+  DEBUG("Interrupts setup completed\n");
+
   // TODO:
-  // setup_interrupts(dev);
   // setup_codecs(dev);
 
   return 0;

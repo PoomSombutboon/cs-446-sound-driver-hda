@@ -126,7 +126,7 @@ typedef uint32_t rirblbase_t;  // has to be 128-byte alignment
 typedef uint32_t rirbubase_t;
 
 // RIRBWP - RIRB Write Pointer
-// specification: section 3.3.27, page 39
+// Specification: section 3.3.27, page 39
 #define RIRBWP 0x58
 #define RIRBWP_LEN 0x2
 typedef union {
@@ -139,7 +139,7 @@ typedef union {
 } __attribute__((packed)) rirbwp_t;
 
 // RINTCNT - RIRB Response Interupt Count
-// specification: section 3.3.28, page 40
+// Specification: section 3.3.28, page 40
 #define RINTCNT 0x5a
 #define RINTCNT_LEN 0x2
 typedef union {
@@ -180,6 +180,20 @@ typedef union {
 #define RIRBSIZECAP_HAS_256(x) (!!(x.rirbszcap & 0x4))
   };
 } __attribute__((packed)) rirbsize_t;
+
+// INTCTL - Interrupt Control
+// Specification: section 3.3.14, page 34
+#define INTCTL 0x20
+#define INTCTL_LEN 0x4
+typedef union {
+  uint32_t val;
+  struct
+  {
+    uint32_t sie : 30;
+    uint8_t cie : 1;
+    uint8_t gie : 1;
+  };
+} __attribute__((packed)) intctl_t;
 
 // ========== CODEC COMMAND AND CONTROL ==========
 
