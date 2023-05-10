@@ -27,6 +27,7 @@
 #include "hda_pci_internal.h"
 #include <dev/hda_pci.h>
 #include <dev/pci.h>
+#include <nautilus/cpu.h>
 #include <nautilus/idt.h>
 #include <nautilus/irq.h>
 #include <nautilus/list.h>
@@ -95,6 +96,78 @@ static struct nk_sound_dev_int ops = {
 
 // ========== METHODS ==========
 
+static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
+                                         uint32_t offset) {
+  uint32_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inl(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readl 0x%08x returns 0x%08x\n", offset, result);
+  return result;
+}
+
+static inline uint16_t hda_pci_read_regw(struct hda_pci_dev *dev,
+                                         uint32_t offset) {
+  uint16_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inw(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readw 0x%08x returns 0x%04x\n", offset, result);
+  return result;
+}
+
+static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
+                                        uint32_t offset) {
+  uint8_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inb(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readb 0x%08x returns 0x%02x\n", offset, result);
+  return result;
+}
+
+static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint32_t data) {
+  DEBUG_REGS("writel 0x%08x with 0x%08x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outl(data, dev->ioport_start + offset);
+  }
+}
+
+static inline void hda_pci_write_regw(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint16_t data) {
+  DEBUG_REGS("writew 0x%08x with 0x%04x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outw(data, dev->ioport_start + offset);
+  }
+}
+
+static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint8_t data) {
+  DEBUG_REGS("writeb 0x%08x with 0x%02x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outb(data, dev->ioport_start + offset);
+  }
+}
+
 // search for all HDA devices on the PCI bus
 static int discover_devices(struct pci_info *pci) {
   struct list_head *curbus, *curdev;
@@ -133,9 +206,6 @@ static int discover_devices(struct pci_info *pci) {
         }
 
         memset(hdev, 0, sizeof(*hdev));
-        // hdev->pci_intr = cfg->dev_cfg.intr_pin;
-        // hdev->intr_vec = map_pci_irq_to_vec(bus, pdev);
-
         spinlock_init(&hdev->lock);
 
         // pci configuration space consists of up to six 32-bit base address
@@ -288,6 +358,52 @@ static int configure_msi_interrupts(struct hda_pci_dev *dev) {
   return 0;
 }
 
+static void reset(struct hda_pci_dev *d) {
+  gctl_t gctl;
+
+  // CRST bit (offset 0x8, bit 0) should already be 0, but set it again here to
+  // be sure
+  gctl.val = hda_pci_read_regl(d, GCTL);
+  gctl.crst = 0;
+  hda_pci_write_regl(d, GCTL, gctl.val);
+
+  DEBUG("Initiate HDA reset, gctl = %08x\n");
+
+  // write 1 to the CRST bit to take controller out of reset
+  // CRST bit will remain as 0 until reset is complete
+  udelay(1000);
+  gctl.crst = 1;
+  hda_pci_write_regl(d, GCTL, gctl.val);
+
+  // wait for CRST bit to be updated to 1
+  do {
+    gctl.val = hda_pci_read_regl(d, GCTL);
+  } while (gctl.crst != 1);
+
+  DEBUG("Reset completed, gctl = %08x\n");
+}
+
+static void discover_codecs(struct hda_pci_dev *d) {
+  statests_t statests;
+
+  // wait at least 521us after CRST bit has been set to 1
+  udelay(1000);
+
+  statests.val = hda_pci_read_regw(d, STATESTS);
+
+  DEBUG("Initiate codec discovery, statests = %x\n", statests.val);
+
+  // get addresses of codecs that are present
+  for (int i = 0; i < SDIMAX; i++) {
+    if (SDIWAKE(statests, i)) {
+      DEBUG("codec %d exists\n", i);
+      d->codecs[i] = 1;
+    }
+  }
+
+  DEBUG("Codec discovery completed, statests = %x\n", statests.val);
+}
+
 static int bringup_device(struct hda_pci_dev *dev) {
   DEBUG("Bringing up device %u:%u.%u. Starting Address is: %x\n",
         dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun,
@@ -308,7 +424,8 @@ static int bringup_device(struct hda_pci_dev *dev) {
   uint16_t status = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_STATUS_OFFSET);
   DEBUG("Reading PCI status register as 0x%x\n", status);
 
-  // TODO: Initialize device...
+  reset(dev);
+  discover_codecs(dev);
 
   return 0;
 }
