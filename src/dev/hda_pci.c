@@ -220,6 +220,7 @@ static int discover_devices(struct pci_info *pci) {
 
           if (i >= 1 && bar != 0) {
             DEBUG("Not expecting this to be a non-empty bar...\n");
+            return -1;
           }
 
           // if pci bars are memory-mapped (bit 0 is 0x0), make sure they
@@ -275,7 +276,7 @@ static int discover_devices(struct pci_info *pci) {
             hdev->ioport_end = hdev->ioport_start + size;
             hdev->method = IO;
           } else {
-            hdev->mem_start = bar & 0xffffffc0;
+            hdev->mem_start = bar & 0xfffffff0;
             hdev->mem_end = hdev->mem_start + size;
             hdev->method = MEMORY;
           }
@@ -367,7 +368,7 @@ static void reset(struct hda_pci_dev *d) {
   gctl.crst = 0;
   hda_pci_write_regl(d, GCTL, gctl.val);
 
-  DEBUG("Initiate HDA reset, gctl = %08x\n");
+  DEBUG("Initiate HDA reset, gctl = %08x\n", gctl.val);
 
   // write 1 to the CRST bit to take controller out of reset
   // CRST bit will remain as 0 until reset is complete
@@ -379,8 +380,9 @@ static void reset(struct hda_pci_dev *d) {
   do {
     gctl.val = hda_pci_read_regl(d, GCTL);
   } while (gctl.crst != 1);
+  gctl.val = hda_pci_read_regl(d, GCTL);
 
-  DEBUG("Reset completed, gctl = %08x\n");
+  DEBUG("Reset completed, gctl = %08x\n", gctl.val);
 }
 
 static void discover_codecs(struct hda_pci_dev *d) {
@@ -419,7 +421,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
   cmd &= ~0x0400; // turn off interrupt disable
   cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
   DEBUG("Writing PCI command register to 0x%x\n", cmd);
-  pci_dev_cfg_writew(dev->pci_dev, 0x4, HDA_PCI_COMMAND_OFFSET);
+  pci_dev_cfg_writew(dev->pci_dev, HDA_PCI_COMMAND_OFFSET, cmd);
 
   uint16_t status = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_STATUS_OFFSET);
   DEBUG("Reading PCI status register as 0x%x\n", status);

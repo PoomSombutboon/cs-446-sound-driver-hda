@@ -70,8 +70,8 @@ struct hda_pci_dev {
   // pci registers region: only EITHER ioport or mem will be defined
   uint16_t ioport_start;
   uint16_t ioport_end;
-  uint16_t mem_start;
-  uint16_t mem_end;
+  uint64_t mem_start;
+  uint64_t mem_end;
 
   // valid codecs
   uint8_t codecs[SDIMAX];

@@ -42,7 +42,7 @@ int hda_pci_deinit();
 #define ERROR(fmt, args...) ERROR_PRINT("hda_pci: " fmt, ##args)
 
 // show output for all reg read/writes
-#define DO_DEBUG_REGS 1
+#define DO_DEBUG_REGS 0
 #if DO_DEBUG_REGS
 #define DEBUG_REGS(fmt, args...) DEBUG(fmt, ##args)
 #else
