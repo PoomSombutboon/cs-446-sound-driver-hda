@@ -31,7 +31,7 @@ typedef union {
 } __attribute__((packed)) gctl_t;
 
 // STATESTS - State Change Status
-// Specification: sectoin 3.3.9, page 32
+// Specification: section 3.3.9, page 32
 #define STATESTS 0xe
 #define STATESTS_LEN 0x2
 typedef union {
@@ -43,6 +43,114 @@ typedef union {
     uint8_t res : 1;
   };
 } __attribute__((packed)) statests_t;
+
+// CORBLBASE: CORB Lower Base Address
+// Specification: section 3.3.18, page 36
+#define CORBLBASE 0x40
+#define CORBLBASE_LEN 0x4
+typedef uint32_t corblbase_t; // has to be 128-byte alignment
+
+// CORBUBASE: CORB Upper Base Address
+// Specification: section 3.3.19, page 36
+#define CORBUBASE 0x44
+#define CORBUBASE_LEN 0x4
+typedef uint32_t corbubase_t;
+
+// CORBWP - CORB Write Pointer
+// Specification: section 3.3.20, page 37
+#define CORBWP 0x48
+#define CORBWP_LEN 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t corbwp;
+    uint8_t res;
+  };
+} __attribute__((packed)) corbwp_t;
+
+// CORBRP - CORB Read Pointer
+// Specification: section 3.3.21, page 37
+#define CORBRP 0x4a
+#define CORBRP_LEN 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t corbrp : 8;
+    uint8_t res : 7;
+    uint8_t corbrprst : 1;
+  };
+} __attribute__((packed)) corbrp_t;
+
+// CORBCTL - Corb Control
+// Specification: section 3.3.22, page 37
+#define CORBCTL 0x4c
+#define CORBCTL_LEN 0x1
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t cmeie : 1;
+    uint8_t corbrun : 1;
+    uint8_t res : 6;
+  };
+} __attribute__((packed)) corbctl_t;
+
+// CORBSIZE - CORB Size
+// Specification: section 3.3.24, page 38
+#define CORBSIZE 0x4e
+#define CORBSIZE_LEN 0x1
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t corbsize : 2;
+#define CORBSIZE_DECODE(x)                                                     \
+  ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 : x->corbsize == 2 : 256 : 0))
+    uint8_t res : 2;
+    uint8_t corbszcap : 4;
+#define CORBSIZECAP_HAS_2(x) (!!(x.corbszcap & 0x1))
+#define CORBSIZECAP_HAS_16(x) (!!(x.corbszcap & 0x2))
+#define CORBSIZECAP_HAS_256(x) (!!(x.corbszcap & 0x4))
+  };
+} __attribute__((packed)) corbsize_t;
+
+// ========== CODEC COMMAND AND CONTROL ==========
+
+#define MAX_CORB_ENTRIES 256
+typedef union {
+  uint32_t val;
+  struct {
+    uint32_t verb : 20;
+    uint8_t nid : 7;
+    uint8_t indirect : 1;
+    uint8_t CAd : 4;
+  } __attribute__((packed));
+} __attribute__((packed)) corb_entry_t;
+typedef corb_entry_t codec_req_t;
+
+typedef struct {
+  corb_entry_t buf[MAX_CORB_ENTRIES];
+  int size;
+  int cur_write;
+} __attribute__((aligned(128))) corb_state_t;
+
+#define MAX_RIRB_ENTRIES 256
+typedef struct {
+  uint32_t resp;
+  union {
+    uint32_t val;
+    struct {
+      uint8_t codec : 4;
+      uint8_t unsol : 1;
+      uint32_t res : 27;
+    } __attribute__((packed));
+  } __attribute__((packed)) resp_ex;
+} __attribute__((packed)) rirb_entry_t;
+typedef rirb_entry_t codec_resp_t;
+
+typedef struct {
+  rirb_entry_t buf[MAX_RIRB_ENTRIES];
+  int size;
+  int cur_read;
+} __attribute__((aligned(128))) rirb_state_t;
 
 // ========== HDA DEVICE STATES ==========
 
@@ -75,6 +183,10 @@ struct hda_pci_dev {
 
   // valid codecs
   uint8_t codecs[SDIMAX];
+
+  // CORB and RIRB
+  corb_state_t corb;
+  rirb_state_t rirb;
 };
 
 #endif

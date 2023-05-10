@@ -359,7 +359,7 @@ static int configure_msi_interrupts(struct hda_pci_dev *dev) {
   return 0;
 }
 
-static void reset(struct hda_pci_dev *d) {
+static int reset(struct hda_pci_dev *d) {
   gctl_t gctl;
 
   // CRST bit (offset 0x8, bit 0) should already be 0, but set it again here to
@@ -383,9 +383,10 @@ static void reset(struct hda_pci_dev *d) {
   gctl.val = hda_pci_read_regl(d, GCTL);
 
   DEBUG("Reset completed, gctl = %08x\n", gctl.val);
+  return 0;
 }
 
-static void discover_codecs(struct hda_pci_dev *d) {
+static int discover_codecs(struct hda_pci_dev *d) {
   statests_t statests;
 
   // wait at least 521us after CRST bit has been set to 1
@@ -396,14 +397,102 @@ static void discover_codecs(struct hda_pci_dev *d) {
   DEBUG("Initiate codec discovery, statests = %x\n", statests.val);
 
   // get addresses of codecs that are present
+  int found = 0;
   for (int i = 0; i < SDIMAX; i++) {
     if (SDIWAKE(statests, i)) {
-      DEBUG("codec %d exists\n", i);
+      DEBUG("Codec %d exists\n", i);
       d->codecs[i] = 1;
+      found = 1;
     }
   }
 
+  if (!found) {
+    ERROR("Failed to find any codecs");
+    return -1;
+  }
+
   DEBUG("Codec discovery completed, statests = %x\n", statests.val);
+  return 0;
+}
+
+// the steps are defined by the specification, revision 1.0a, section 4.4.1.3 on
+// "Initializing the CORB", page 64
+static int setup_corb(struct hda_pci_dev *d) {
+  corbctl_t cc;
+  corbsize_t cs;
+
+  // stop CORB
+  cc.val = hda_pci_read_regb(d, CORBCTL);
+  cc.corbrun = 0;
+  hda_pci_write_regb(d, CORBCTL, cc.val);
+
+  // determine and configure CORB size on HDA device
+  cs.val = hda_pci_read_regb(d, CORBSIZE);
+  if (CORBSIZECAP_HAS_256(cs)) {
+    d->corb.size = 256;
+    cs.corbsize = 2;
+  } else if (CORBSIZECAP_HAS_16(cs)) {
+    d->corb.size = 16;
+    cs.corbsize = 1;
+  } else if (CORBSIZECAP_HAS_2(cs)) {
+    d->corb.size = 2;
+    cs.corbsize = 0;
+  } else {
+    ERROR("Cannot determine CORB available sizes from CODEC\n");
+    return -1;
+  }
+  hda_pci_write_regb(d, CORBSIZE, cs.val);
+  DEBUG("CORB size set to %d\n", d->corb.size);
+
+  // Update CORBUBASE and CORBLBASE registers
+  corbubase_t cu = (uint32_t)(((uint64_t)d->corb.buf) >> 32);
+  corblbase_t cl = (uint32_t)(((uint64_t)d->corb.buf));
+  hda_pci_write_regl(d, CORBUBASE, cu);
+  hda_pci_write_regl(d, CORBLBASE, cl);
+  DEBUG("CORB DMA address set to %x:%x (%p)\n", cu, cl, d->corb.buf);
+
+  // as specified by the Intel HDA specification, write pointer is initialized
+  // to 0; the first write will occur at WP = 1 (offset 4 bytes)
+  // See specification, revision 1.0a, page 63
+  d->corb.cur_write = 0;
+
+  // reset CORB read pointer; to reset:
+  // 1. write 1 to CORBRPRST bit and wait for completion
+  // 2. write 0 to CORBRPRST bit and wait for completion
+  corbrp_t rp;
+
+  rp.val = hda_pci_read_regw(d, CORBRP);
+  rp.corbrprst = 1;
+  hda_pci_write_regw(d, CORBRP, rp.val);
+  do {
+    rp.val = hda_pci_read_regw(d, CORBRP);
+  } while (!rp.corbrprst);
+
+  rp.val = hda_pci_read_regw(d, CORBRP);
+  rp.corbrprst = 0;
+  hda_pci_write_regw(d, CORBRP, rp.val);
+  do {
+    rp.val = hda_pci_read_regw(d, CORBRP);
+  } while (rp.corbrprst);
+
+  DEBUG("CORB read pointer has been reset\n");
+
+  // reset CORB write pointer; to reset, just set CORBWP bit to 0
+  corbwp_t wp;
+  wp.val = hda_pci_read_regw(d, CORBWP);
+  wp.corbwp = 0;
+  hda_pci_write_regw(d, CORBWP, wp.val);
+
+  DEBUG("CORB write pointer has been reset\n");
+
+  // set CORBRUN bit to 1 to enable CORB operation
+  cc.val = hda_pci_read_regb(d, CORBCTL);
+  cc.corbrun = 1;
+  hda_pci_write_regb(d, CORBCTL, cc.val);
+
+  DEBUG("CORB turned on\n");
+
+  return 0;
 }
 
 static int bringup_device(struct hda_pci_dev *dev) {
@@ -412,7 +501,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
         dev->mem_start);
 
   if (configure_msi_interrupts(dev)) {
-    ERROR("Failed to configure MSI interrupts");
+    ERROR("Failed to configure MSI interrupts\n");
     return -1;
   }
 
@@ -426,8 +515,31 @@ static int bringup_device(struct hda_pci_dev *dev) {
   uint16_t status = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_STATUS_OFFSET);
   DEBUG("Reading PCI status register as 0x%x\n", status);
 
-  reset(dev);
-  discover_codecs(dev);
+  DEBUG("Initiate HDA device reset\n");
+  if (reset(dev)) {
+    ERROR("HDA device reset failed\n");
+    return -1;
+  }
+  DEBUG("HDA device reset completed\n");
+
+  DEBUG("Initiate codec discovery\n");
+  if (discover_codecs(dev)) {
+    ERROR("Codec discovery failed\n");
+    return -1;
+  }
+  DEBUG("Codec discovery completed\n");
+
+  DEBUG("Initiate CORB setup\n");
+  if (setup_corb(dev)) {
+    ERROR("CORB setup failed\n");
+    return -1;
+  }
+  DEBUG("CORB setup completed\n");
+
+  // TODO:
+  // setup_rirb(dev);
+  // setup_interrupts(dev);
+  // setup_codecs(dev);
 
   return 0;
 }
