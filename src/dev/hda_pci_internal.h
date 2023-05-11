@@ -238,7 +238,8 @@ typedef corb_entry_t codec_req_t;
 typedef struct {
   corb_entry_t buf[MAX_CORB_ENTRIES];
   int size;
-  int cur_write;
+  // use CORBWP->CORBWP instead; this is a write pointer maintained by the HDA
+  // hardware itself int cur_write;
 } __attribute__((aligned(128))) corb_state_t;
 
 #define MAX_RIRB_ENTRIES 256

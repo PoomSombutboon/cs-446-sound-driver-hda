@@ -40,7 +40,10 @@
 // ========== TEMPORARY FUNCTION ==========
 // TODO: REMOVE AFTER
 
-static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) { return 0; }
+static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
+  DEBUG("**** INSIDE HANDLER ****\n");
+  return 0;
+}
 
 int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[]) {
   return 0;
@@ -453,11 +456,6 @@ static int setup_corb(struct hda_pci_dev *d) {
   hda_pci_write_regl(d, CORBLBASE, cl);
   DEBUG("CORB DMA address set to %x:%x (%p)\n", cu, cl, d->corb.buf);
 
-  // as specified by the Intel HDA specification, write pointer is initialized
-  // to 0; the first write will occur at WP = 1 (offset 4 bytes)
-  // see specification, revision 1.0a, page 63
-  d->corb.cur_write = 0;
-
   // reset CORB read pointer; to reset:
   // 1. write 1 to CORBRPRST bit and wait for completion
   // 2. write 0 to CORBRPRST bit and wait for completion
@@ -538,24 +536,30 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // read pointer set to 0. note that the offset for each response is 8 bytes
   d->rirb.cur_read = 0;
 
-  // configure RIRB Intertupt Count to set the number of responses written to
-  // RIRB before the controller raise an interupt (see specificaition,
-  // revision 1.0a, page 67)
-  // RIRB Interupt Count is set such that the controller will send an interupt
-  // after the number of reponses written to RIRB is equal to RIRB's size
+
+  // ==================== HACK WORKAROUND ====================
+  // we are not using the RIRB interrupt count feature at all, so it is not
+  // entirely clear why RINTCNT has to be set.
+  // HOWEVER, there appears to be a bug with QEMU's implementation of Intel HDA
+  // the number of responses our device can send to RIRB is limited by RINTCNT
+  // we are currently setting RINTCNT to the max value of 255, meaning
+  // throughout the lifetime of our device, only 255 responses can be received
   rintcnt_t ri;
   ri.val = hda_pci_read_regw(d, RINTCNT);
-  ri.rintcnt = d->rirb.size - 1;
+  ri.rintcnt = -1;
   hda_pci_write_regw(d, RINTCNT, ri.val);
+  // =========================================================
 
-  DEBUG("RIRB interrupt count has been set to %d\n", d->rirb.size - 1);
+  DEBUG("RIRB interrupt count has been set to %d\n", ri.rintcnt);
 
-  // start RIRB and enable interupts when the response is overrun (RIRBOIC) and
-  // when the number of responses is equal to the size of RIRB (RINTCTL)
+  // start RIRB and start DMA (which runs when response queue is not empty)
   rc.val = hda_pci_read_regb(d, RIRBCTL);
   rc.rirbdmaen = 1;
-  rc.rirboic = 1;
-  rc.rintctl = 1;
+  // we are NOT using interrupts to decide when to read from the RIRB
+  // the "transact()" method always writes one command to CORB and then reads
+  // the response (thus conusming it) from RIRB immediately
+  rc.rirboic = 0; // interrupt from response overrun
+  rc.rintctl = 0; // interrupt after N number of responses
   hda_pci_write_regb(d, RIRBCTL, rc.val);
 
   DEBUG("RIRB turned on\n");
@@ -567,7 +571,7 @@ static int setup_interrupts(struct hda_pci_dev *d) {
   // set all bits to ones to enable global, controller, and stream interrupts
   intctl_t c;
   c.val = 0;
-  c.cie = 1;
+  c.cie = 0;
   c.gie = 1;
   c.sie = -1;
   hda_pci_write_regl(d, INTCTL, c.val);
@@ -579,18 +583,19 @@ static int setup_interrupts(struct hda_pci_dev *d) {
 
 // see specification, figure 10, section 4.4.1.4, page 65
 static int corb_push_request(struct hda_pci_dev *d, codec_req_t *r) {
-  // update internal "write pointer" state for bookkeeping sake
-  d->corb.cur_write = (d->corb.cur_write + 1) % d->corb.size;
-
   // make sure there are enough slots in the CORB buffer to push a new request
   // CORB buffer runs out of space when the write and read pointers are equal
   corbrp_t rp;
+  corbwp_t wp;
+  uint8_t new_wp;
   do {
     rp.val = hda_pci_read_regw(d, CORBRP);
-  } while (rp.corbrp == d->corb.cur_write);
+    wp.val = hda_pci_read_regw(d, CORBWP);
+    new_wp = (wp.corbwp + 1) % d->corb.size;
+  } while (rp.corbrp == new_wp);
 
   // write command into the CORB buffer
-  d->corb.buf[d->corb.cur_write].val = r->val;
+  d->corb.buf[new_wp].val = r->val;
 
   // make sure this write becomes visible to other cpus
   // this should also make it visible to anything else that is
@@ -598,9 +603,7 @@ static int corb_push_request(struct hda_pci_dev *d, codec_req_t *r) {
   __asm__ __volatile__("mfence" : : : "memory");
 
   // update CORPWP to indicate index of last command in buffer
-  corbwp_t wp;
-  wp.val = hda_pci_read_regw(d, CORBWP);
-  wp.corbwp = (wp.corbwp + 1) % d->corb.size;
+  wp.corbwp = new_wp;
   hda_pci_write_regw(d, CORBWP, wp.val);
 
   return 0;
