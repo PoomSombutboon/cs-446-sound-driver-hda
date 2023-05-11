@@ -102,10 +102,7 @@ static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
   uint32_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl (%1), %0"
-                         : "=r"(result)
-                         : "r"(addr)
-                         : "memory");
+    __asm__ __volatile__("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
   } else {
     result = inl(dev->ioport_start + offset);
   }
@@ -118,10 +115,7 @@ static inline uint16_t hda_pci_read_regw(struct hda_pci_dev *dev,
   uint16_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw (%1), %0"
-                         : "=r"(result)
-                         : "r"(addr)
-                         : "memory");
+    __asm__ __volatile__("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
   } else {
     result = inw(dev->ioport_start + offset);
   }
@@ -134,10 +128,7 @@ static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
   uint8_t result;
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb (%1), %0"
-                         : "=r"(result)
-                         : "r"(addr)
-                         : "memory");
+    __asm__ __volatile__("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
   } else {
     result = inb(dev->ioport_start + offset);
   }
@@ -150,10 +141,7 @@ static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writel 0x%08x with 0x%08x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl %1, (%0)"
-                         :
-                         : "r"(addr), "r"(data)
-                         : "memory");
+    __asm__ __volatile__("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
   } else {
     outl(data, dev->ioport_start + offset);
   }
@@ -164,10 +152,7 @@ static inline void hda_pci_write_regw(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writew 0x%08x with 0x%04x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw %1, (%0)"
-                         :
-                         : "r"(addr), "r"(data)
-                         : "memory");
+    __asm__ __volatile__("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
   } else {
     outw(data, dev->ioport_start + offset);
   }
@@ -178,10 +163,7 @@ static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
   DEBUG_REGS("writeb 0x%08x with 0x%02x\n", offset, data);
   if (dev->method == MEMORY) {
     uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb %1, (%0)"
-                         :
-                         : "r"(addr), "r"(data)
-                         : "memory");
+    __asm__ __volatile__("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
   } else {
     outb(data, dev->ioport_start + offset);
   }
@@ -309,16 +291,15 @@ static int discover_devices(struct pci_info *pci) {
 
         hdev->pci_dev = pdev;
 
-        INFO(
-            "Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
-            "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
-            "mem_end=%p access_method=%s\n",
-            bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
-            hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
-            hdev->mem_end,
-            hdev->method == IO       ? "IO"
-            : hdev->method == MEMORY ? "MEMORY"
-                                     : "NONE");
+        INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
+             "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
+             "mem_end=%p access_method=%s\n",
+             bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
+             hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
+             hdev->mem_end,
+             hdev->method == IO       ? "IO"
+             : hdev->method == MEMORY ? "MEMORY"
+                                      : "NONE");
 
         list_add(&hdev->hda_node, &dev_list);
       }
@@ -414,7 +395,7 @@ static int discover_codecs(struct hda_pci_dev *d) {
 
   statests.val = hda_pci_read_regw(d, STATESTS);
 
-  DEBUG("Initiate codec discovery, statests = %x\n", statests.val);
+  DEBUG("Discovering codecs, statests = %x\n", statests.val);
 
   // get addresses of codecs that are present
   int found = 0;
@@ -431,7 +412,7 @@ static int discover_codecs(struct hda_pci_dev *d) {
     return -1;
   }
 
-  DEBUG("Codec discovery completed, statests = %x\n", statests.val);
+  DEBUG("Discovered codecs, statests = %x\n", statests.val);
   return 0;
 }
 
@@ -441,10 +422,11 @@ static int setup_corb(struct hda_pci_dev *d) {
   corbctl_t cc;
   corbsize_t cs;
 
-  // stop CORB
+  // stop CORB by turning off DMA
   cc.val = hda_pci_read_regb(d, CORBCTL);
   cc.corbrun = 0;
   hda_pci_write_regb(d, CORBCTL, cc.val);
+  DEBUG("CORB turned off\n");
 
   // determine and configure CORB size on HDA device
   cs.val = hda_pci_read_regb(d, CORBSIZE);
@@ -464,7 +446,7 @@ static int setup_corb(struct hda_pci_dev *d) {
   hda_pci_write_regb(d, CORBSIZE, cs.val);
   DEBUG("CORB size set to %d\n", d->corb.size);
 
-  // Update CORBUBASE and CORBLBASE registers
+  // update CORBUBASE and CORBLBASE registers
   corbubase_t cu = (uint32_t)(((uint64_t)d->corb.buf) >> 32);
   corblbase_t cl = (uint32_t)(((uint64_t)d->corb.buf));
   hda_pci_write_regl(d, CORBUBASE, cu);
@@ -556,47 +538,140 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // read pointer set to 0. note that the offset for each response is 8 bytes
   d->rirb.cur_read = 0;
 
-  // reset RIRB write pointer and set RIRB write pointer to point to 0th entry
-  rirbwp_t wp;
-  wp.val = hda_pci_read_regw(d, RIRBWP);
-  wp.rirbwprst = 1;
-  wp.rirbwp = 0;
-  hda_pci_write_regw(d, RIRBWP, wp.val);
-  DEBUG("RIRB write pointer has been reset and configured\n");
-
   // configure RIRB Intertupt Count to set the number of responses written to
   // RIRB before the controller raise an interupt (see specificaition,
   // revision 1.0a, page 67)
-  // RIRB Interupt Count is set such that the controller will sent an interupt
+  // RIRB Interupt Count is set such that the controller will send an interupt
   // after the number of reponses written to RIRB is equal to RIRB's size
   rintcnt_t ri;
   ri.val = hda_pci_read_regw(d, RINTCNT);
   ri.rintcnt = d->rirb.size - 1;
   hda_pci_write_regw(d, RINTCNT, ri.val);
+
   DEBUG("RIRB interrupt count has been set to %d\n", d->rirb.size - 1);
 
-  // start RIRB and enable interupts when the response is overrun (RIRBOIC) and 
+  // start RIRB and enable interupts when the response is overrun (RIRBOIC) and
   // when the number of responses is equal to the size of RIRB (RINTCTL)
   rc.val = hda_pci_read_regb(d, RIRBCTL);
   rc.rirbdmaen = 1;
   rc.rirboic = 1;
   rc.rintctl = 1;
   hda_pci_write_regb(d, RIRBCTL, rc.val);
+
   DEBUG("RIRB turned on\n");
 
   return 0;
 }
 
-static void setup_interrupts(struct hda_pci_dev *d)
-{
-    // set all bits to ones to enable global, controller, and stream interrupts
-    intctl_t c;
-    c.val = 0;
-    c.cie = 1;
-    c.gie = 1;
-    c.sie = -1;
-    hda_pci_write_regl(d, INTCTL, c.val);
-    DEBUG("Enable interupts: global, controller, and streams\n");
+static int setup_interrupts(struct hda_pci_dev *d) {
+  // set all bits to ones to enable global, controller, and stream interrupts
+  intctl_t c;
+  c.val = 0;
+  c.cie = 1;
+  c.gie = 1;
+  c.sie = -1;
+  hda_pci_write_regl(d, INTCTL, c.val);
+
+  DEBUG("Enable interupts: global, controller, and streams\n");
+
+  return 0;
+}
+
+// see specification, figure 10, section 4.4.1.4, page 65
+static int corb_push_request(struct hda_pci_dev *d, codec_req_t *r) {
+  // update internal "write pointer" state for bookkeeping sake
+  d->corb.cur_write = (d->corb.cur_write + 1) % d->corb.size;
+
+  // make sure there are enough slots in the CORB buffer to push a new request
+  // CORB buffer runs out of space when the write and read pointers are equal
+  corbrp_t rp;
+  do {
+    rp.val = hda_pci_read_regw(d, CORBRP);
+  } while (rp.corbrp == d->corb.cur_write);
+
+  // write command into the CORB buffer
+  d->corb.buf[d->corb.cur_write].val = r->val;
+
+  // make sure this write becomes visible to other cpus
+  // this should also make it visible to anything else that is
+  // coherent.
+  __asm__ __volatile__("mfence" : : : "memory");
+
+  // update CORPWP to indicate index of last command in buffer
+  corbwp_t wp;
+  wp.val = hda_pci_read_regw(d, CORBWP);
+  wp.corbwp = (wp.corbwp + 1) % d->corb.size;
+  hda_pci_write_regw(d, CORBWP, wp.val);
+
+  return 0;
+}
+
+static int rirb_pop_response(struct hda_pci_dev *d, codec_resp_t *r) {
+  // make sure there is at least one response in the RIRB buffer to read
+  // responses from; there is at least a response when write and read pointers
+  // are not equal
+  rirbwp_t wp;
+  do {
+    wp.val = hda_pci_read_regw(d, RIRBWP);
+  } while (wp.rirbwp == d->rirb.cur_read);
+
+  // read response from the RIRB buffer
+  *r = d->rirb.buf[wp.rirbwp];
+
+  // update internal "read pointer" state for bookkeeping sake
+  d->rirb.cur_read = (d->rirb.cur_read + 1) % d->rirb.size;
+
+  return 0;
+}
+
+static int transact(struct hda_pci_dev *d, int codec, int nid, int indirect,
+                    uint32_t verb, codec_resp_t *rp) {
+  codec_req_t rq;
+  rq.val = 0;
+  rq.CAd = codec;
+  rq.nid = nid;
+  rq.indirect = indirect;
+  rq.verb = verb;
+
+  if (corb_push_request(d, &rq)) {
+    ERROR("Unable to send CORB request\n");
+    return -1;
+  }
+
+  if (rirb_pop_response(d, rp)) {
+    ERROR("Unable to get RIRB response\n");
+    return -1;
+  }
+
+  return 0;
+}
+
+static int scan_codec(struct hda_pci_dev *d, int codec) {
+  DEBUG("Scanning codec %d\n", codec);
+
+  codec_resp_t rp;
+  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, VENDOR), &rp);
+  DEBUG("Interrogating root node. Codec vendor %04x device %04x\n",
+        rp.resp >> 16 & 0xffff, rp.resp & 0xffff);
+  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT), &rp);
+  DEBUG("Getting subordinate nodes information from root node. Starting node: "
+        "%d total nodes: %d\n",
+        rp.resp >> 16 & 0xff, rp.resp & 0xff);
+
+  return 0;
+}
+
+static int scan_codecs(struct hda_pci_dev *d) {
+  DEBUG("Scanning for all codecs\n");
+  for (int i = 0; i < SDIMAX; i++) {
+    if (d->codecs[i]) {
+      if (scan_codec(d, i)) {
+        ERROR("Codecs scan failed\n");
+        return -1;
+      }
+    }
+  }
+  return 0;
 }
 
 static int bringup_device(struct hda_pci_dev *dev) {
@@ -611,8 +686,8 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // make sure pci config space command register is acceptable
   uint16_t cmd = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_COMMAND_OFFSET);
-  cmd &= ~0x0400;  // turn off interrupt disable
-  cmd |= 0x7;      // make sure bus master, memory, and io space are enabled
+  cmd &= ~0x0400; // turn off interrupt disable
+  cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
   DEBUG("Writing PCI command register to 0x%x\n", cmd);
   pci_dev_cfg_writew(dev->pci_dev, HDA_PCI_COMMAND_OFFSET, cmd);
 
@@ -648,11 +723,18 @@ static int bringup_device(struct hda_pci_dev *dev) {
   DEBUG("RIRB setup completed\n");
 
   DEBUG("Initiate interrupts setup\n");
-  setup_interrupts(dev);
+  if (setup_interrupts(dev)) {
+    ERROR("Interrupts setup failed\n");
+    return -1;
+  }
   DEBUG("Interrupts setup completed\n");
 
-  // TODO:
-  // setup_codecs(dev);
+  DEBUG("Initiate codecs scan\n");
+  if (scan_codecs(dev)) {
+    ERROR("Codecs scan failed\n");
+    return -1;
+  }
+  DEBUG("Codecs scan completed\n");
 
   return 0;
 }

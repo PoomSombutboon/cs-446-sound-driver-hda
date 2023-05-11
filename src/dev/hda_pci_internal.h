@@ -48,7 +48,7 @@ typedef union {
 // Specification: section 3.3.18, page 36
 #define CORBLBASE 0x40
 #define CORBLBASE_LEN 0x4
-typedef uint32_t corblbase_t;  // has to be 128-byte alignment
+typedef uint32_t corblbase_t; // has to be 128-byte alignment
 
 // CORBUBASE: CORB Upper Base Address
 // Specification: section 3.3.19, page 36
@@ -102,9 +102,8 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t corbsize : 2;
-#define CORBSIZE_DECODE(x)                       \
-  ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 \
-                                            : x->corbsize == 2 : 256 : 0))
+#define CORBSIZE_DECODE(x)                                                     \
+  ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 : x->corbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t corbszcap : 4;
 #define CORBSIZECAP_HAS_2(x) (!!(x.corbszcap & 0x1))
@@ -117,7 +116,7 @@ typedef union {
 // Specification: section 3.3.25, page 39
 #define RIRBLBASE 0x50
 #define RIRBLBASE_LEN 0x4
-typedef uint32_t rirblbase_t;  // has to be 128-byte alignment
+typedef uint32_t rirblbase_t; // has to be 128-byte alignment
 
 // RIRBUBASE - RIRB Upper Base Address
 // Specification: section 3.3.26, page 39
@@ -145,7 +144,7 @@ typedef union {
 typedef union {
   uint16_t val;
   struct {
-    uint8_t rintcnt;  // 1=1, 2=2, but 0=256
+    uint8_t rintcnt;
     uint8_t res;
   };
 } __attribute__((packed)) rintcnt_t;
@@ -171,8 +170,8 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t rirbsize : 2;
-#define RIRBSIZE_DECODE(x) ((x->rirbsize == 0 ? 2 : x->rirsize == 1 ? 16 \
-                                                                    : x->rirbsize == 2 : 256 : 0))
+#define RIRBSIZE_DECODE(x)                                                     \
+  ((x->rirbsize == 0 ? 2 : x->rirsize == 1 ? 16 : x->rirbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t rirbszcap : 4;
 #define RIRBSIZECAP_HAS_2(x) (!!(x.rirbszcap & 0x1))
@@ -187,13 +186,40 @@ typedef union {
 #define INTCTL_LEN 0x4
 typedef union {
   uint32_t val;
-  struct
-  {
+  struct {
     uint32_t sie : 30;
     uint8_t cie : 1;
     uint8_t gie : 1;
   };
 } __attribute__((packed)) intctl_t;
+
+// ========== CODEC PARAMETERS AND CONTROLS ==========
+
+// verb generators
+#define MAKE_VERB_8(id, payload)                                               \
+  ((((uint32_t)(id)) << 8) | (((uint32_t)(payload)) & 0xff))
+#define MAKE_VERB_16(id, payload)                                              \
+  ((((uint32_t)(id)) << 16) | (((uint32_t)(payload)) & 0xffff))
+
+// codec controls (12-bit identifiers)
+#define GET_PARAM 0xf00
+
+// codec parameters (4-bit identifiers)
+#define VENDOR 0x0
+#define REVISION 0x2
+#define SUBORD_NODE_COUNT 0x4
+#define FUNC_GROUP_TYPE 0x5
+#define AUDIO_FUNC_GROUP_CAPS 0x8
+#define AUDIO_WIDGET_CAPS 0x9
+#define PCM_SIZES_AND_RATES 0xa
+#define STREAM_FORMATS 0xb
+#define PIN_CAPS 0xc
+#define AMP_CAPS 0xd
+#define CON_LIST_LEN 0xe
+#define POWER_STATES 0xf
+#define PROC_CAPS 0x10
+#define GPIO_COUNT 0x11
+#define VOL_KNOB_CAPS 0x13
 
 // ========== CODEC COMMAND AND CONTROL ==========
 
@@ -256,9 +282,7 @@ struct hda_pci_dev {
   uint8_t intr_vec;
 
   // identifier to determine if pci device is mmio or pmio
-  enum { NONE,
-         IO,
-         MEMORY } method;
+  enum { NONE, IO, MEMORY } method;
 
   // pci registers region: only EITHER ioport or mem will be defined
   uint16_t ioport_start;
