@@ -8,6 +8,10 @@
 
 // ========== PCI CONFIG SPACE ==========
 
+#define HDA_MAX_NUM_OF_STREAMS 15
+
+// ========== PCI CONFIG SPACE ==========
+
 #define INTEL_VENDOR_ID 0x8086
 #define HDA_DEVICE_ID 0x2668
 #define HDA_PCI_COMMAND_OFFSET 0x4
@@ -297,6 +301,9 @@ struct hda_pci_dev {
   // CORB and RIRB
   corb_state_t corb;
   rirb_state_t rirb;
+
+  // store all streams
+  struct nk_sound_dev_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
 };
 
 #endif

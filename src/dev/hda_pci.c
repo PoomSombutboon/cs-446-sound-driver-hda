@@ -49,13 +49,6 @@ int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[]) {
   return 0;
 }
 
-struct nk_sound_dev_stream *
-hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
-                struct nk_sound_dev_params *params) {
-  struct nk_sound_dev_stream *ret;
-  return ret;
-}
-
 int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
   return 0;
 }
@@ -78,6 +71,57 @@ int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
 int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
                           struct nk_sound_dev_params *p) {
   return 0;
+}
+
+// ========== INTERFACE ==========
+
+int hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
+                    struct nk_sound_dev_params *params) {
+  DEBUG("Opening new stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!params) {
+    ERROR("The device parameters pointer is null\n");
+    return -1;
+  }
+
+  // TODO: Check to make sure that the given sound parameters are valid here
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+
+  // find first available stream number
+  // stream numbers range from 1 to 15, inclusive
+  for (uint8_t i = 1; i <= HDA_MAX_NUM_OF_STREAMS; i++) {
+    // stream exists, move onto next stream
+    if (dev->streams[i]) {
+      continue;
+    }
+
+    // create new stream state
+    struct nk_sound_dev_stream *stream =
+        malloc(sizeof(struct nk_sound_dev_stream));
+
+    if (!stream) {
+      ERROR("Cannot allocate stream\n");
+      return -1;
+    }
+
+    stream->stream_id = i;
+    stream->type = stream_type;
+    stream->params = *params;
+    dev->streams[i] = stream;
+
+    DEBUG("Opened new stream %d\n", dev->streams[i]->stream_id);
+
+    return i;
+  }
+
+  ERROR("No streams available\n");
+  return -1;
 }
 
 // ========== GLOBAL FIELDS ==========
@@ -536,7 +580,6 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // read pointer set to 0. note that the offset for each response is 8 bytes
   d->rirb.cur_read = 0;
 
-
   // ==================== HACK WORKAROUND ====================
   // we are not using the RIRB interrupt count feature at all, so it is not
   // entirely clear why RINTCNT has to be set.
@@ -738,6 +781,22 @@ static int bringup_device(struct hda_pci_dev *dev) {
     return -1;
   }
   DEBUG("Codecs scan completed\n");
+
+  // ========== TEST CODE, REMOVE AFTER ==========
+
+  struct nk_sound_dev_params params;
+
+  params.scale = NK_SOUND_DEV_SCALE_LINEAR;
+  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
+  params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
+  params.num_of_channels = 2;
+
+  // should be able to open first 15 streams and not the last last 2
+  for (int j = 0; j < 17; j++) {
+    hda_open_stream(dev, NK_SOUND_DEV_OUTPUT_STREAM, &params);
+  }
+
+  // =============================================
 
   return 0;
 }
