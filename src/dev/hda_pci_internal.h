@@ -332,6 +332,80 @@ struct available_mode {
   struct nk_sound_dev_params params;
 };
 
+// ========== STREAM MANAGEMNET ==========
+// First output stream in QEMU
+#define OUTPUT_STREAM_NUM 4
+
+// SDNCTL - Stream Descriptor n Control
+// Specification: secification 3.3.35, page 43
+#define SDNCTL 0x80 + (OUTPUT_STREAM_NUM * 0x20)
+#define SDNCTL_LEN 0x3
+typedef union {
+  struct {
+    uint8_t byte_1;
+    uint8_t byte_2;
+    uint8_t byte_3;
+  } __attribute__((packed));
+  struct {
+    uint8_t srst : 1;
+    uint8_t run : 1;
+    uint8_t ioce : 1;
+    uint8_t feie : 1;
+    uint8_t deie : 1;
+    uint16_t resv : 11;
+    uint8_t stripe : 2;
+    uint8_t tp : 1;
+    uint8_t dir : 1;
+    uint8_t strm_num : 4;
+  } __attribute__((packed));
+} __attribute__((packed)) sdnctl_t;
+
+// SDNFMT - Stream Descriptor n Format
+// Specification: section 3.3.41, page 47
+#define SDNFMT 0x92 + (OUTPUT_STREAM_NUM * 0x20)
+#define SDNFMT 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t chan : 4;
+    uint8_t bits : 3;
+    uint8_t resv_1 : 1;
+    uint8_t div : 3;
+    uint8_t mult : 3;
+    uint8_t base : 1;
+    uint8_t resv_2 : 1;
+  }
+} __attribute__((packed)) sdnfmt_t;
+
+#define BASE_48kHz 0
+#define BASE_44kHz1 1
+#define MULT_BY_1 0
+#define MULT_BY_2 1
+#define MULT_BY_3 2
+#define MULT_BY_4 3
+#define DIV_BY_1 0
+#define DIV_BY_2 1
+#define DIV_BY_3 2
+#define DIV_BY_4 3
+#define DIV_BY_5 4
+#define DIV_BY_6 5
+#define DIV_BY_7 6
+#define DIV_BY_8 7
+// Specification: section 7.3.4.7, page 205
+const uint8_t HDA_SAMPLE_RATES[][3] = {
+    {BASE_48kHz, MULT_BY_0, DIV_BY_6},  // 8.0 kHz
+    {BASE_44kHz1, MULT_BY_0, DIV_BY_4}, // 11.025 kHz
+    {BASE_48kHz, MULT_BY_0, DIV_BY_3},  // 16.0 kHz
+    {BASE_44kHz1, MULT_BY_0, DIV_BY_2}, // 22.05 kHz
+    {BASE_48kHz, MULT_BY_2, DIV_BY_3},  // 32.0 kHz
+    {BASE_44kHz1, MULT_BY_0, DIV_BY_1}, // 44.1 kHz
+    {BASE_48kHz, MULT_BY_0, DIV_BY_1},  // 48.0 kHz
+    {BASE_44kHz1, MULT_BY_2, DIV_BY_1}, // 88.2 kHz
+    {BASE_48kHz, MULT_BY_2, DIV_BY_1},  // 96.0 kHz
+    {BASE_44kHz1, MULT_BY_4, DIV_BY_1}, // 176.4 kHz
+    {BASE_48kHz, MULT_BY_4, DIV_BY_1},  // 192.0 kHz
+};
+
 // ========== HDA DEVICE STATES ==========
 
 struct hda_pci_dev {
@@ -374,12 +448,6 @@ struct hda_pci_dev {
 
   // store available mdoes
   struct list_head available_modes_list;
-  // TODO: Create a field to store avaliable modes
-  // was thinking about dynamic array since we don't know how many set of params
-  // is avaliable until as scan through the widges, but also not too sure about
-  // this since c does not have dynamic array (pls correct me if im wrong about
-  // this). so, was not sure if there is a better way to how store the avalible
-  // modes.
 };
 
 #endif

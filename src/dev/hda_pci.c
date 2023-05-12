@@ -72,6 +72,11 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 
 // ========== INTERFACE ==========
 
+static int check_valid_params(struct hda_pci_dev *dev,
+                              struct nk_sound_dev_params *params);
+
+static int reset_stream(struct hda_pci_dev *dev);
+
 int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
 
@@ -85,9 +90,19 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
     return -1;
   }
 
-  // TODO: Check to make sure that the given sound parameters are valid here
-
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+
+  // check if the given sound parameters are valid
+  DEBUG("Check if the given parameters are valid\n");
+  if (check_valid_params(dev, params)) {
+    ERROR("Given parameters are not compatible with the device\n");
+    return -1;
+  }
+  DEBUG("Check completed\n");
+
+  if (reset_stream(dev)) {
+    ERROR("Cannot reset stream descriptor\n");
+  }
 
   // find first available stream number
   // stream numbers range from 1 to 15, inclusive
@@ -1082,6 +1097,88 @@ static int bringup_devices() {
           dev->pci_dev->bus->num, dev->pci_dev->num, dev->pci_dev->fun);
   }
 
+  return 0;
+}
+
+// ========== STREAM HELPER FUNCTIONS ==========
+static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control) {
+  hda_pci_write_regb(dev, SDNCTL, sd_control->byte_1);
+  hda_pci_write_regb(dev, SDNCTL + 1, sd_control->byte_2);
+  hda_pci_write_regb(dev, SDNCTL + 2, sd_control->byte_3);
+}
+
+static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control) {
+  sd_control->byte_1 = hda_pci_read_regb(dev, SDNCTL);
+  sd_control->byte_2 = hda_pci_read_regb(dev, SDNCTL + 1);
+  sd_control->byte_3 = hda_pci_read_regb(dev, SDNCTL + 2);
+}
+
+static int check_valid_params(struct hda_pci_dev *dev,
+                              struct nk_sound_dev_params *params) {
+  struct list_head *curmode;
+  struct available_mode *mode;
+  list_for_each(curmode, &(dev->available_modes_list)) {
+    mode = list_entry(curmode, struct available_mode, node);
+    if (mode->params.type == params->type &&
+        mode->params.num_of_channels == params->num_of_channels &&
+        mode->params.sample_rate == params->sample_rate &&
+        mode->params.sample_resolution == params->sample_resolution) {
+      return 0;
+    }
+  }
+  return -1;
+}
+
+static int reset_stream(struct hda_pci_dev *dev) {
+  sdnctl_t sd_control;
+
+  // specification: section 3.3.35, page 45
+  // clear the run bit and reset stream descriptor control by setting srst to 1 
+  DEBUG("Clearing RUN bit and resetting stream descriptor\n");
+  read_sd_control(dev, &sd_control);
+  // sd_control.run = 0; // RUN bit must be cleared before SRST is asserted
+  sd_control.srst = 1;
+  write_sd_control(dev, &sd_control);
+  // software must read a 1 for srst to verify that the stream is reset
+  DEBUG("Verifying that SRST is set to 1\n");
+  do {
+    read_sd_control(dev, &sd_control);
+    DEBUG("fkjdslkfdfjklsd %d\n", sd_control.srst);
+  } while (sd_control.srst != 1);
+  DEBUG("Verified SRST: %d == 1\n", sd_control.srst);
+
+  // exit stream descriptor from reset state by setting srst to 0
+  DEBUG("Exiting the reset mode and claring RUN bit");
+  read_sd_control(dev, &sd_control);
+  sd_control.srst = 0;
+  write_sd_control(dev, &sd_control);
+  // software must read a 0 from srst before accessing any of the stream
+  // registers
+  DEBUG("Verifying that SRST is set to 0\n");
+  do {
+    read_sd_control(dev, &sd_control);
+  } while (sd_control.srst != 0);
+  DEBUG("Verified SRST: %d == 0\n", sd_control.srst);
+
+  DEBUG("Completed reseting SRST\n");
+  return 0;
+}
+
+static int configure_stream(struct hda_pci_dev *dev,
+                            struct nk_sound_dev_params *p) {
+  DEBUG("Configure stream descriptor with the given parameters\n");
+  sdnfmt_t sd_format;
+  sd_format.val = hda_pci_read_regw(dev, SDNFMT);
+  sd_format.chan = p->num_of_channels;
+  sd_format.bits = p->sample_resolution;
+  sd_format.div = HDA_SAMPLE_RATES[p->sample_rate][2];
+  sd_format.mult = HDA_SAMPLE_RATES[p->sample_rate][1];
+  sd_format.base = HDA_SAMPLE_RATES[p->sample_rate][0];
+  hda_pci_write_regw(dev, SDNFMT, sd_format.val);
+
+  sd_format.val = hda_pci_read_regw(dev, SDNFMT);
+  DEBUG("Stream Desciptor Format - SDNFMT: %016x\n", sd_format.val);
+  DEBUG("Completed configuring stream descriptor\n");
   return 0;
 }
 
