@@ -42,7 +42,7 @@ typedef enum {
 } nk_sound_dev_stream_t;
 
 typedef enum {
-  NK_SOUND_DEV_SAMPLE_RATE_8kHZ, 
+  NK_SOUND_DEV_SAMPLE_RATE_8kHZ,
   NK_SOUND_DEV_SAMPLE_RATE_11kHZ025,
   NK_SOUND_DEV_SAMPLE_RATE_16kHZ,
   NK_SOUND_DEV_SAMPLE_RATE_22kHZ05,
@@ -71,6 +71,7 @@ typedef enum {
 // - Sample alignment
 
 struct nk_sound_dev_params {
+  nk_sound_dev_stream_t type;
   uint8_t num_of_channels;
   nk_sound_dev_sample_rate_t sample_rate;
   nk_sound_dev_sample_resolution_t sample_resolution;
@@ -79,7 +80,6 @@ struct nk_sound_dev_params {
 
 struct nk_sound_dev_stream {
   uint8_t stream_id;
-  nk_sound_dev_stream_t type;
   struct nk_sound_dev_params params;
 };
 
@@ -110,11 +110,11 @@ struct nk_sound_dev_int {
   // device driver
 
   // interface to learn about parameters supported by the sound device driver
-  int (*get_avaiable_modes)(void *state, struct nk_sound_dev_params params[]);
+  int (*get_avaiable_modes)(void *state, struct nk_sound_dev_params params[],
+                            uint32_t params_size);
 
   // interface to open/close streams
-  int (*open_stream)(void *state, nk_sound_dev_stream_t stream_type,
-                     struct nk_sound_dev_params *params);
+  int (*open_stream)(void *state, struct nk_sound_dev_params *params);
   int (*close_stream)(void *state, struct nk_sound_dev_stream *stream);
 
   // interface to write/read streams
@@ -153,7 +153,6 @@ int nk_sound_dev_get_avaliable_modes(struct nk_sound_dev *dev,
                                      struct nk_sound_dev_params params[]);
 
 int nk_sound_dev_open_stream(struct nk_sound_dev *dev,
-                             nk_sound_dev_stream_t stream_type,
                              struct nk_sound_dev_params *params);
 int nk_sound_dev_close_stream(struct nk_sound_dev *dev,
                               struct nk_sound_dev_stream *stream);

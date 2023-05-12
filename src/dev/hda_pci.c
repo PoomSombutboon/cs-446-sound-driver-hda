@@ -36,16 +36,13 @@
 #include <nautilus/spinlock.h>
 
 #include "hda_pci_internal.h"
+#include "nautilus/printk.h"
 
 // ========== TEMPORARY FUNCTION ==========
 // TODO: REMOVE AFTER
 
 static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
   DEBUG("**** INSIDE HANDLER ****\n");
-  return 0;
-}
-
-int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[]) {
   return 0;
 }
 
@@ -75,8 +72,7 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 
 // ========== INTERFACE ==========
 
-int hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
-                    struct nk_sound_dev_params *params) {
+int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
 
   if (!state) {
@@ -111,7 +107,6 @@ int hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
     }
 
     stream->stream_id = i;
-    stream->type = stream_type;
     stream->params = *params;
     dev->streams[i] = stream;
 
@@ -122,6 +117,39 @@ int hda_open_stream(void *state, nk_sound_dev_stream_t stream_type,
 
   ERROR("No streams available\n");
   return -1;
+}
+
+int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
+                           uint32_t params_size) {
+
+  DEBUG("Getting available modes on HDA device\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!params) {
+    ERROR("The pointer to a list of params is null\n");
+    return -1;
+  }
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+
+  struct list_head *curmode;
+  uint32_t i = 0;
+  list_for_each(curmode, &(dev->available_modes_list)) {
+    struct available_mode *mode =
+        list_entry(curmode, struct available_mode, node);
+    params[i++] = mode->params;
+
+    if (i == params_size) {
+      break;
+    }
+  }
+
+  DEBUG("Found %d available modes on HDA device %d\n", i, dev->pci_dev->num);
+  return 0;
 }
 
 // ========== GLOBAL FIELDS ==========
@@ -338,16 +366,15 @@ static int discover_devices(struct pci_info *pci) {
 
         hdev->pci_dev = pdev;
 
-        INFO(
-            "Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
-            "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
-            "mem_end=%p access_method=%s\n",
-            bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
-            hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
-            hdev->mem_end,
-            hdev->method == IO       ? "IO"
-            : hdev->method == MEMORY ? "MEMORY"
-                                     : "NONE");
+        INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
+             "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
+             "mem_end=%p access_method=%s\n",
+             bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
+             hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
+             hdev->mem_end,
+             hdev->method == IO       ? "IO"
+             : hdev->method == MEMORY ? "MEMORY"
+                                      : "NONE");
 
         list_add(&hdev->hda_node, &dev_list);
       }
@@ -411,8 +438,8 @@ static int configure_msi_interrupts(struct hda_pci_dev *dev) {
 static int reset(struct hda_pci_dev *d) {
   gctl_t gctl;
 
-  // CRST bit (offset 0x8, bit 0) should already be 0, but set it again here to
-  // be sure
+  // CRST bit (offset 0x8, bit 0) should already be 0, but set it again here
+  // to be sure
   gctl.val = hda_pci_read_regl(d, GCTL);
   gctl.crst = 0;
   hda_pci_write_regl(d, GCTL, gctl.val);
@@ -464,8 +491,8 @@ static int discover_codecs(struct hda_pci_dev *d) {
   return 0;
 }
 
-// the steps are defined by the specification, revision 1.0a, section 4.4.1.3 on
-// "Initializing the CORB", page 64
+// the steps are defined by the specification, revision 1.0a, section 4.4.1.3
+// on "Initializing the CORB", page 64
 static int setup_corb(struct hda_pci_dev *d) {
   corbctl_t cc;
   corbsize_t cs;
@@ -540,8 +567,8 @@ static int setup_corb(struct hda_pci_dev *d) {
   return 0;
 }
 
-// the steps are defined by the specification, revision 1.0a, section 4.4.1.3 on
-// "Initializing the RIRB", page 68
+// the steps are defined by the specification, revision 1.0a, section 4.4.1.3
+// on "Initializing the RIRB", page 68
 static int setup_rirb(struct hda_pci_dev *d) {
   rirbctl_t rc;
   rirbsize_t rs;
@@ -584,9 +611,9 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // ==================== HACK WORKAROUND ====================
   // we are not using the RIRB interrupt count feature at all, so it is not
   // entirely clear why RINTCNT has to be set.
-  // HOWEVER, there appears to be a bug with QEMU's implementation of Intel HDA
-  // the number of responses our device can send to RIRB is limited by RINTCNT
-  // we are currently setting RINTCNT to the max value of 255, meaning
+  // HOWEVER, there appears to be a bug with QEMU's implementation of Intel
+  // HDA the number of responses our device can send to RIRB is limited by
+  // RINTCNT we are currently setting RINTCNT to the max value of 255, meaning
   // throughout the lifetime of our device, only 255 responses can be received
   rintcnt_t ri;
   ri.val = hda_pci_read_regw(d, RINTCNT);
@@ -602,8 +629,8 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // we are NOT using interrupts to decide when to read from the RIRB
   // the "transact()" method always writes one command to CORB and then reads
   // the response (thus conusming it) from RIRB immediately
-  rc.rirboic = 0;  // interrupt from response overrun
-  rc.rintctl = 0;  // interrupt after N number of responses
+  rc.rirboic = 0; // interrupt from response overrun
+  rc.rintctl = 0; // interrupt after N number of responses
   hda_pci_write_regb(d, RIRBCTL, rc.val);
 
   DEBUG("RIRB turned on\n");
@@ -693,57 +720,235 @@ static int transact(struct hda_pci_dev *d, int codec, int nid, int indirect,
   return 0;
 }
 
+void print_debug_pcm(uint32_t resp) {
+  DEBUG("      PCM sizes and rates: %08x\n", resp);
+  if (PCM_IS_SUPPORTED(resp, PCM_BIT_DEPTH_32)) {
+    DEBUG("        Depth: %s\n", "32 bits");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_BIT_DEPTH_24)) {
+    DEBUG("        Depth: %s\n", "24 bits");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_BIT_DEPTH_20)) {
+    DEBUG("        Depth: %s\n", "20 bits");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_BIT_DEPTH_16)) {
+    DEBUG("        Depth: %s\n", "16 bits");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_BIT_DEPTH_8)) {
+    DEBUG("        Depth: %s\n", "8 bits");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_8kHZ)) {
+    DEBUG("        Rate: %s\n", "8 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_11kHZ025)) {
+    DEBUG("        Rate: %s\n", "11.025 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_16kHZ)) {
+    DEBUG("        Rate: %s\n", "16 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_22kHZ05)) {
+    DEBUG("        Rate: %s\n", "22.05 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_32kHZ)) {
+    DEBUG("        Rate: %s\n", "32 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_44kHZ1)) {
+    DEBUG("        Rate: %s\n", "44.1 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_48kHZ)) {
+    DEBUG("        Rate: %s\n", "48 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_88kHZ2)) {
+    DEBUG("        Rate: %s\n", "88.2 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_96kHZ)) {
+    DEBUG("        Rate: %s\n", "96 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_176kHZ4)) {
+    DEBUG("        Rate: %s\n", "176 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_192kHZ)) {
+    DEBUG("        Rate: %s\n", "192 kHz");
+  }
+  if (PCM_IS_SUPPORTED(resp, PCM_SAMPLE_RATE_384kHZ)) {
+    DEBUG("        Rate: %s\n", "384 kHz");
+  }
+}
+
 static int scan_codec(struct hda_pci_dev *d, int codec) {
   DEBUG("Scanning codec %d\n", codec);
 
+  // Initialize available_modes_list, which is what we will use to store all
+  // available modes supported by our HDA device
+  INIT_LIST_HEAD(&d->available_modes_list);
+
   codec_resp_t rp;
-  int root_node = 0;  // specification: section 7.2.1, page 132
+
+  // Root Node has NID = 0
+  // specification: section 7.2.1, page 132
+  int root_node = 0;
+
+  // get Root Node's Vendor and Device IDs
+  // specification: section 7.3.4.1, page 198
   transact(d, codec, root_node, 0, MAKE_VERB_8(GET_PARAM, VENDOR), &rp);
-  DEBUG("Root node: codec vendor %04x device %04x\n", rp.resp >> 16 & 0xffff,
+  DEBUG("Root Node: codec vendor %04x device %04x\n", rp.resp >> 16 & 0xffff,
         rp.resp & 0xffff);
 
-  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT), &rp);
+  // get function group nodes associated with the codec (root node)
+  // specification: section 7.3.4.3, page 199
+  transact(d, codec, root_node, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT),
+           &rp);
   int first_func_node = rp.resp >> 16 & 0xff;
   int num_func_nodes = rp.resp & 0xff;
 
-  int first_widget_node;
-  int num_widget_nodes;
+  // for each function group, we find its widgets
+  uint8_t first_widget_node;
+  uint8_t num_widget_nodes;
+  uint8_t widget_type;
   for (int curr_func = first_func_node;
        curr_func < first_func_node + num_func_nodes; curr_func++) {
+    // get widget associated with the function group
+    // specification: section 7.3.4.3, page 199
     transact(d, codec, curr_func, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT),
              &rp);
     first_widget_node = rp.resp >> 16 & 0xff;
     num_widget_nodes = rp.resp & 0xff;
-    DEBUG("  Function group node %d\n", curr_func);
 
+    // get functional group type of the current node
+    // specification: section 7.3.4.4, page 199
+    transact(d, codec, curr_func, 0, MAKE_VERB_8(GET_PARAM, FUNC_GROUP_TYPE),
+             &rp);
+    widget_type = rp.resp & 0xff;
+
+    DEBUG("  Functional Group: NID %d type '%s'\n", curr_func,
+          (widget_type == NODE_TYPE_AUDIO_FUNCTION_GROUP
+               ? "Audio Function Group"
+               : (widget_type == NODE_TYPE_AUDIO_VENDOR_DEFINED_MODEM
+                      ? "Vendor Defined Modem"
+                      : ((widget_type >= NODE_TYPE_AUDIO_VENDOR_DEFINED_START &&
+                          widget_type <= NODE_TYPE_AUDIO_VENDOR_DEFINED_END)
+                             ? "Vendor Defined Function Group"
+                             : "Reserved"))));
+
+    // we only care about the "Audio Function Group", which is responsible for
+    // playing sound
+    if (widget_type != 0x1) {
+      continue;
+    }
+
+    // for each widget in the audio function group, get its paramters
     for (int curr_widget = first_widget_node;
          curr_widget < first_widget_node + num_widget_nodes; curr_widget++) {
-      DEBUG("    Widget node %d\n", curr_widget);
 
-      // get number of channel
+      // get audio widget capabilities
       // specification: section 7.3.4.6, page 201
       transact(d, codec, curr_widget, 0,
                MAKE_VERB_8(GET_PARAM, AUDIO_WIDGET_CAPS), &rp);
-      DEBUG("      Number of channels: %d\n",
-            1 + (((rp.resp >> 12) & 0xe) | (rp.resp & 0x1)));
+      widget_type = rp.resp >> 20 & 0xf;
+
+      // get string representation of the widget type
+      char widget_type_str[10];
+      switch (widget_type) {
+      case WIDGET_TYPE_AUDIO_OUTPUT:
+        snprintf(widget_type_str, 10, "'output'");
+        break;
+      case WIDGET_TYPE_AUDIO_INPUT:
+        snprintf(widget_type_str, 10, "'input'");
+        break;
+      case WIDGET_TYPE_AUDIO_MIXER:
+        snprintf(widget_type_str, 10, "'mixer'");
+        break;
+      case WIDGET_TYPE_AUDIO_SELECTOR:
+        snprintf(widget_type_str, 10, "'selector'");
+        break;
+      case WIDGET_TYPE_PIN_COMPLEX:
+        snprintf(widget_type_str, 10, "'pin'");
+        break;
+      case WIDGET_TYPE_POWER:
+        snprintf(widget_type_str, 10, "'power'");
+        break;
+      case WIDGET_TYPE_VOLUME_KNOB:
+        snprintf(widget_type_str, 10, "'volume'");
+        break;
+      case WIDGET_TYPE_BEEP_GENERATOR:
+        snprintf(widget_type_str, 10, "'beep'");
+        break;
+      case WIDGET_TYPE_VENDOR_DEFINED:
+        snprintf(widget_type_str, 10, "'vendor'");
+      }
+      DEBUG("    Widget Node: NID %d type %s\n", curr_widget, widget_type_str);
+
+      // get number of channels supported by this widget
+      uint8_t num_of_channels = 1 + (((rp.resp >> 12) & 0xe) | (rp.resp & 0x1));
+      DEBUG("      Number of channels: %d\n", num_of_channels);
+
+      // if widget is not output or input, skip
+      if (widget_type != WIDGET_TYPE_AUDIO_OUTPUT &&
+          widget_type != WIDGET_TYPE_AUDIO_INPUT) {
+        continue;
+      }
+
+      // see if stream supports PCM
+      // specification: section 7.3.4.8, page 205
+      transact(d, codec, curr_widget, 0, MAKE_VERB_8(GET_PARAM, STREAM_FORMATS),
+               &rp);
+      if (rp.resp & 0xf) {
+        DEBUG("      Supports PCM\n");
+      } else {
+        ERROR("      Does not support PCM\n");
+        continue;
+      }
 
       // get sample rate and bits per sample
       // specification: section 7.3.4.7, page 204
-      // note: should ignore this when it equals to 0 since pcm sizes and rates
-      // only apply to audio function group, audio input converter, and audio
-      // output convert. might be able to use AUDIO_WIDGET_CAPS to filter out
-      // the widget we don't care.
       transact(d, codec, curr_widget, 0,
                MAKE_VERB_8(GET_PARAM, PCM_SIZES_AND_RATES), &rp);
-      DEBUG("      PCM sizes and rates: %08x\n", rp.resp);
+      uint32_t pcm_supported = rp.resp;
+      print_debug_pcm(pcm_supported);
 
-      // get stream type/format
-      // specification: section 7.3.4.7, page 205
-      transact(d, codec, curr_widget, 0, MAKE_VERB_8(GET_PARAM, STREAM_FORMATS),
-               &rp);
-      DEBUG("      Stream formats: %08x\n", rp.resp);
+      // populate list of available modes from PCM
+      for (uint8_t bit_depth = PCM_BIT_DEPTH_8; bit_depth <= PCM_BIT_DEPTH_32;
+           bit_depth++) {
+        for (uint8_t sample_rate = PCM_SAMPLE_RATE_8kHZ;
+             sample_rate <= PCM_SAMPLE_RATE_384kHZ; sample_rate++) {
+          // if given PCM bit depth and sample rate are supported, then add it
+          // to our list of available modes
+          if (PCM_IS_SUPPORTED(pcm_supported, bit_depth) &&
+              PCM_IS_SUPPORTED(pcm_supported, sample_rate)) {
+            // the params struct to be stored in our list of available modes
+            struct nk_sound_dev_params params = {
+                .type = widget_type == WIDGET_TYPE_AUDIO_INPUT
+                            ? NK_SOUND_DEV_INPUT_STREAM
+                            : NK_SOUND_DEV_OUTPUT_STREAM,
+                .num_of_channels = num_of_channels,
+                .sample_rate =
+                    PCM_SAMPLE_RATES[sample_rate - PCM_SAMPLE_RATE_OFFSET],
+                .sample_resolution =
+                    PCM_BIT_DEPTHS[bit_depth - PCM_BIT_DEPTH_OFFSET],
+                .scale = NK_SOUND_DEV_SCALE_LINEAR,
+            };
 
-      // TODO: Store these info into one of the field in hda_pci_dev *d
+            // create new mode struct on heap
+            struct available_mode *mode;
+            mode = malloc(sizeof(struct available_mode));
+
+            if (!mode) {
+              ERROR("Cannot allocate new available mode\n");
+              continue;
+            }
+
+            // store the new mode in our list of available modes
+            mode->params = params;
+            list_add(&mode->node, &d->available_modes_list);
+
+            DEBUG("Added new available mode: type %d channels %d sample_rate "
+                  "%d sample_resolution %d scale %d\n",
+                  mode->params.type, mode->params.num_of_channels,
+                  mode->params.sample_rate, mode->params.sample_resolution,
+                  mode->params.scale);
+          }
+        }
+      }
     }
   }
   return 0;
@@ -774,8 +979,8 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // make sure pci config space command register is acceptable
   uint16_t cmd = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_COMMAND_OFFSET);
-  cmd &= ~0x0400;  // turn off interrupt disable
-  cmd |= 0x7;      // make sure bus master, memory, and io space are enabled
+  cmd &= ~0x0400; // turn off interrupt disable
+  cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
   DEBUG("Writing PCI command register to 0x%x\n", cmd);
   pci_dev_cfg_writew(dev->pci_dev, HDA_PCI_COMMAND_OFFSET, cmd);
 
@@ -828,6 +1033,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   struct nk_sound_dev_params params;
 
+  params.type = NK_SOUND_DEV_OUTPUT_STREAM;
   params.scale = NK_SOUND_DEV_SCALE_LINEAR;
   params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
   params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
@@ -835,8 +1041,11 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // should be able to open first 15 streams and not the last last 2
   for (int j = 0; j < 17; j++) {
-    hda_open_stream(dev, NK_SOUND_DEV_OUTPUT_STREAM, &params);
+    hda_open_stream(dev, &params);
   }
+
+  struct nk_sound_dev_params available_modes[100];
+  hda_get_avaiable_modes(dev, available_modes, 100);
 
   // =============================================
 

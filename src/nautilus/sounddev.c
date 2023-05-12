@@ -79,18 +79,18 @@ struct nk_sound_dev *nk_sound_dev_find(char *name) {
 }
 
 int nk_sound_dev_get_avaiable_modes(struct nk_sound_dev *dev,
-                                    struct nk_sound_dev_params params[]) {
+                                    struct nk_sound_dev_params params[],
+                                    uint32_t params_size) {
   struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-  return di->get_avaiable_modes(d->state, params);
+  return di->get_avaiable_modes(d->state, params, params_size);
 }
 
 int nk_sound_dev_open_stream(struct nk_sound_dev *dev,
-                             nk_sound_dev_stream_t stream_type,
                              struct nk_sound_dev_params *params) {
   struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-  return di->open_stream(d->state, stream_type, params);
+  return di->open_stream(d->state, params);
 }
 
 int nk_sound_dev_close_stream(struct nk_sound_dev *dev,
@@ -132,7 +132,7 @@ int nk_sound_dev_write_to_stream(
     struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, uint8_t *src,
     uint64_t len, nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status, void *state), void *state) {
-  if (stream->type == NK_SOUND_DEV_INPUT_STREAM) {
+  if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
     DEBUG("write sound not possible, stream is of type "
           "NK_SOUND_DEV_INPUT_STREAM\n");
     return -1;
@@ -195,7 +195,7 @@ int nk_sound_dev_read_to_stream(
     struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, uint8_t *dst,
     uint64_t len, nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status, void *state), void *state) {
-  if (stream->type == NK_SOUND_DEV_OUTPUT_STREAM) {
+  if (stream->params.type == NK_SOUND_DEV_OUTPUT_STREAM) {
     DEBUG("write sound not possible, stream is of type "
           "NK_SOUND_DEV_OUTPUT_STREAM\n");
     return -1;

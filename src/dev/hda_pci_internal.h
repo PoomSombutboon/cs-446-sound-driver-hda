@@ -52,7 +52,7 @@ typedef union {
 // Specification: section 3.3.18, page 36
 #define CORBLBASE 0x40
 #define CORBLBASE_LEN 0x4
-typedef uint32_t corblbase_t;  // has to be 128-byte alignment
+typedef uint32_t corblbase_t; // has to be 128-byte alignment
 
 // CORBUBASE: CORB Upper Base Address
 // Specification: section 3.3.19, page 36
@@ -106,7 +106,7 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t corbsize : 2;
-#define CORBSIZE_DECODE(x) \
+#define CORBSIZE_DECODE(x)                                                     \
   ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 : x->corbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t corbszcap : 4;
@@ -120,7 +120,7 @@ typedef union {
 // Specification: section 3.3.25, page 39
 #define RIRBLBASE 0x50
 #define RIRBLBASE_LEN 0x4
-typedef uint32_t rirblbase_t;  // has to be 128-byte alignment
+typedef uint32_t rirblbase_t; // has to be 128-byte alignment
 
 // RIRBUBASE - RIRB Upper Base Address
 // Specification: section 3.3.26, page 39
@@ -174,7 +174,7 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t rirbsize : 2;
-#define RIRBSIZE_DECODE(x) \
+#define RIRBSIZE_DECODE(x)                                                     \
   ((x->rirbsize == 0 ? 2 : x->rirsize == 1 ? 16 : x->rirbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t rirbszcap : 4;
@@ -200,9 +200,9 @@ typedef union {
 // ========== CODEC PARAMETERS AND CONTROLS ==========
 
 // verb generators
-#define MAKE_VERB_8(id, payload) \
+#define MAKE_VERB_8(id, payload)                                               \
   ((((uint32_t)(id)) << 8) | (((uint32_t)(payload)) & 0xff))
-#define MAKE_VERB_16(id, payload) \
+#define MAKE_VERB_16(id, payload)                                              \
   ((((uint32_t)(id)) << 16) | (((uint32_t)(payload)) & 0xffff))
 
 // Specification: section 7.3.3, page 141
@@ -226,6 +226,60 @@ typedef union {
 #define PROC_CAPS 0x10
 #define GPIO_COUNT 0x11
 #define VOL_KNOB_CAPS 0x13
+
+// Specification: section 7.3.4.4, page 200
+#define NODE_TYPE_AUDIO_FUNCTION_GROUP 0x1
+#define NODE_TYPE_AUDIO_VENDOR_DEFINED_MODEM 0x2
+#define NODE_TYPE_AUDIO_VENDOR_DEFINED_START 0x80
+#define NODE_TYPE_AUDIO_VENDOR_DEFINED_END 0xff
+
+// Specification: section 7.3.4.6, page 202
+#define WIDGET_TYPE_AUDIO_OUTPUT 0x0
+#define WIDGET_TYPE_AUDIO_INPUT 0x1
+#define WIDGET_TYPE_AUDIO_MIXER 0x2
+#define WIDGET_TYPE_AUDIO_SELECTOR 0x3
+#define WIDGET_TYPE_PIN_COMPLEX 0x4
+#define WIDGET_TYPE_POWER 0x5
+#define WIDGET_TYPE_VOLUME_KNOB 0x6
+#define WIDGET_TYPE_BEEP_GENERATOR 0x7
+#define WIDGET_TYPE_VENDOR_DEFINED 0xf
+
+// Specification: section 7.3.4.7, page 205
+#define PCM_BIT_DEPTH_32 20
+#define PCM_BIT_DEPTH_24 19
+#define PCM_BIT_DEPTH_20 18
+#define PCM_BIT_DEPTH_16 17
+#define PCM_BIT_DEPTH_8 16
+#define PCM_SAMPLE_RATE_8kHZ 0
+#define PCM_SAMPLE_RATE_11kHZ025 1
+#define PCM_SAMPLE_RATE_16kHZ 2
+#define PCM_SAMPLE_RATE_22kHZ05 3
+#define PCM_SAMPLE_RATE_32kHZ 4
+#define PCM_SAMPLE_RATE_44kHZ1 5
+#define PCM_SAMPLE_RATE_48kHZ 6
+#define PCM_SAMPLE_RATE_88kHZ2 7
+#define PCM_SAMPLE_RATE_96kHZ 8
+#define PCM_SAMPLE_RATE_176kHZ4 9
+#define PCM_SAMPLE_RATE_192kHZ 10
+#define PCM_SAMPLE_RATE_384kHZ 11
+#define PCM_IS_SUPPORTED(rp, offset) (!!(rp >> offset & 0x1))
+#define PCM_BIT_DEPTH_OFFSET 16
+#define PCM_SAMPLE_RATE_OFFSET 0
+
+const nk_sound_dev_sample_rate_t PCM_SAMPLE_RATES[] = {
+    NK_SOUND_DEV_SAMPLE_RATE_8kHZ,   NK_SOUND_DEV_SAMPLE_RATE_11kHZ025,
+    NK_SOUND_DEV_SAMPLE_RATE_16kHZ,  NK_SOUND_DEV_SAMPLE_RATE_22kHZ05,
+    NK_SOUND_DEV_SAMPLE_RATE_32kHZ,  NK_SOUND_DEV_SAMPLE_RATE_44kHZ1,
+    NK_SOUND_DEV_SAMPLE_RATE_48kHZ,  NK_SOUND_DEV_SAMPLE_RATE_88kHZ2,
+    NK_SOUND_DEV_SAMPLE_RATE_96kHZ,  NK_SOUND_DEV_SAMPLE_RATE_176kHZ4,
+    NK_SOUND_DEV_SAMPLE_RATE_192kHZ, NK_SOUND_DEV_SAMPLE_RATE_384kHZ,
+};
+
+const nk_sound_dev_sample_resolution_t PCM_BIT_DEPTHS[] = {
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_8,  NK_SOUND_DEV_SAMPLE_RESOLUTION_16,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_20, NK_SOUND_DEV_SAMPLE_RESOLUTION_24,
+    NK_SOUND_DEV_SAMPLE_RESOLUTION_32,
+};
 
 // ========== CODEC COMMAND AND CONTROL ==========
 
@@ -268,6 +322,16 @@ typedef struct {
   int cur_read;
 } __attribute__((aligned(128))) rirb_state_t;
 
+// ========== AVAILABLE MODE NODE ==========
+
+struct available_mode {
+  // node associated with this struct
+  struct list_head node;
+
+  // parameters for this mode
+  struct nk_sound_dev_params params;
+};
+
 // ========== HDA DEVICE STATES ==========
 
 struct hda_pci_dev {
@@ -280,7 +344,8 @@ struct hda_pci_dev {
   // pci device
   struct pci_dev *pci_dev;
 
-  // list of all hda devices will be stored here
+  // node associated with this device
+  // it is stored in "dev_list", a global variable inside hda_pci.c
   struct list_head hda_node;
 
   // the following is for legacy interrupts
@@ -307,6 +372,8 @@ struct hda_pci_dev {
   // store all streams
   struct nk_sound_dev_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
 
+  // store available mdoes
+  struct list_head available_modes_list;
   // TODO: Create a field to store avaliable modes
   // was thinking about dynamic array since we don't know how many set of params
   // is avaliable until as scan through the widges, but also not too sure about
