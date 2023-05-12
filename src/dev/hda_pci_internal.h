@@ -52,7 +52,7 @@ typedef union {
 // Specification: section 3.3.18, page 36
 #define CORBLBASE 0x40
 #define CORBLBASE_LEN 0x4
-typedef uint32_t corblbase_t; // has to be 128-byte alignment
+typedef uint32_t corblbase_t;  // has to be 128-byte alignment
 
 // CORBUBASE: CORB Upper Base Address
 // Specification: section 3.3.19, page 36
@@ -106,7 +106,7 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t corbsize : 2;
-#define CORBSIZE_DECODE(x)                                                     \
+#define CORBSIZE_DECODE(x) \
   ((x->corbsize == 0 ? 2 : x->corbsize == 1 ? 16 : x->corbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t corbszcap : 4;
@@ -120,7 +120,7 @@ typedef union {
 // Specification: section 3.3.25, page 39
 #define RIRBLBASE 0x50
 #define RIRBLBASE_LEN 0x4
-typedef uint32_t rirblbase_t; // has to be 128-byte alignment
+typedef uint32_t rirblbase_t;  // has to be 128-byte alignment
 
 // RIRBUBASE - RIRB Upper Base Address
 // Specification: section 3.3.26, page 39
@@ -174,7 +174,7 @@ typedef union {
   uint8_t val;
   struct {
     uint8_t rirbsize : 2;
-#define RIRBSIZE_DECODE(x)                                                     \
+#define RIRBSIZE_DECODE(x) \
   ((x->rirbsize == 0 ? 2 : x->rirsize == 1 ? 16 : x->rirbsize == 2 : 256 : 0))
     uint8_t res : 2;
     uint8_t rirbszcap : 4;
@@ -200,14 +200,16 @@ typedef union {
 // ========== CODEC PARAMETERS AND CONTROLS ==========
 
 // verb generators
-#define MAKE_VERB_8(id, payload)                                               \
+#define MAKE_VERB_8(id, payload) \
   ((((uint32_t)(id)) << 8) | (((uint32_t)(payload)) & 0xff))
-#define MAKE_VERB_16(id, payload)                                              \
+#define MAKE_VERB_16(id, payload) \
   ((((uint32_t)(id)) << 16) | (((uint32_t)(payload)) & 0xffff))
 
+// Specification: section 7.3.3, page 141
 // codec controls (12-bit identifiers)
 #define GET_PARAM 0xf00
 
+// Specication: section 7.3.4, page 198
 // codec parameters (4-bit identifiers)
 #define VENDOR 0x0
 #define REVISION 0x2
@@ -304,6 +306,13 @@ struct hda_pci_dev {
 
   // store all streams
   struct nk_sound_dev_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
+
+  // TODO: Create a field to store avaliable modes
+  // was thinking about dynamic array since we don't know how many set of params
+  // is avaliable until as scan through the widges, but also not too sure about
+  // this since c does not have dynamic array (pls correct me if im wrong about
+  // this). so, was not sure if there is a better way to how store the avalible
+  // modes.
 };
 
 #endif

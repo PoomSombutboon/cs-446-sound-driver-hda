@@ -338,15 +338,16 @@ static int discover_devices(struct pci_info *pci) {
 
         hdev->pci_dev = pdev;
 
-        INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
-             "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
-             "mem_end=%p access_method=%s\n",
-             bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
-             hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
-             hdev->mem_end,
-             hdev->method == IO       ? "IO"
-             : hdev->method == MEMORY ? "MEMORY"
-                                      : "NONE");
+        INFO(
+            "Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
+            "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
+            "mem_end=%p access_method=%s\n",
+            bus->num, pdev->num, 0, hdev->pci_intr, hdev->intr_vec,
+            hdev->ioport_start, hdev->ioport_end, hdev->mem_start,
+            hdev->mem_end,
+            hdev->method == IO       ? "IO"
+            : hdev->method == MEMORY ? "MEMORY"
+                                     : "NONE");
 
         list_add(&hdev->hda_node, &dev_list);
       }
@@ -601,8 +602,8 @@ static int setup_rirb(struct hda_pci_dev *d) {
   // we are NOT using interrupts to decide when to read from the RIRB
   // the "transact()" method always writes one command to CORB and then reads
   // the response (thus conusming it) from RIRB immediately
-  rc.rirboic = 0; // interrupt from response overrun
-  rc.rintctl = 0; // interrupt after N number of responses
+  rc.rirboic = 0;  // interrupt from response overrun
+  rc.rintctl = 0;  // interrupt after N number of responses
   hda_pci_write_regb(d, RIRBCTL, rc.val);
 
   DEBUG("RIRB turned on\n");
@@ -696,14 +697,55 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
   DEBUG("Scanning codec %d\n", codec);
 
   codec_resp_t rp;
-  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, VENDOR), &rp);
-  DEBUG("Interrogating root node. Codec vendor %04x device %04x\n",
-        rp.resp >> 16 & 0xffff, rp.resp & 0xffff);
-  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT), &rp);
-  DEBUG("Getting subordinate nodes information from root node. Starting node: "
-        "%d total nodes: %d\n",
-        rp.resp >> 16 & 0xff, rp.resp & 0xff);
+  int root_node = 0;  // specification: section 7.2.1, page 132
+  transact(d, codec, root_node, 0, MAKE_VERB_8(GET_PARAM, VENDOR), &rp);
+  DEBUG("Root node: codec vendor %04x device %04x\n", rp.resp >> 16 & 0xffff,
+        rp.resp & 0xffff);
 
+  transact(d, codec, 0, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT), &rp);
+  int first_func_node = rp.resp >> 16 & 0xff;
+  int num_func_nodes = rp.resp & 0xff;
+
+  int first_widget_node;
+  int num_widget_nodes;
+  for (int curr_func = first_func_node;
+       curr_func < first_func_node + num_func_nodes; curr_func++) {
+    transact(d, codec, curr_func, 0, MAKE_VERB_8(GET_PARAM, SUBORD_NODE_COUNT),
+             &rp);
+    first_widget_node = rp.resp >> 16 & 0xff;
+    num_widget_nodes = rp.resp & 0xff;
+    DEBUG("  Function group node %d\n", curr_func);
+
+    for (int curr_widget = first_widget_node;
+         curr_widget < first_widget_node + num_widget_nodes; curr_widget++) {
+      DEBUG("    Widget node %d\n", curr_widget);
+
+      // get number of channel
+      // specification: section 7.3.4.6, page 201
+      transact(d, codec, curr_widget, 0,
+               MAKE_VERB_8(GET_PARAM, AUDIO_WIDGET_CAPS), &rp);
+      DEBUG("      Number of channels: %d\n",
+            1 + (((rp.resp >> 12) & 0xe) | (rp.resp & 0x1)));
+
+      // get sample rate and bits per sample
+      // specification: section 7.3.4.7, page 204
+      // note: should ignore this when it equals to 0 since pcm sizes and rates
+      // only apply to audio function group, audio input converter, and audio
+      // output convert. might be able to use AUDIO_WIDGET_CAPS to filter out
+      // the widget we don't care.
+      transact(d, codec, curr_widget, 0,
+               MAKE_VERB_8(GET_PARAM, PCM_SIZES_AND_RATES), &rp);
+      DEBUG("      PCM sizes and rates: %08x\n", rp.resp);
+
+      // get stream type/format
+      // specification: section 7.3.4.7, page 205
+      transact(d, codec, curr_widget, 0, MAKE_VERB_8(GET_PARAM, STREAM_FORMATS),
+               &rp);
+      DEBUG("      Stream formats: %08x\n", rp.resp);
+
+      // TODO: Store these info into one of the field in hda_pci_dev *d
+    }
+  }
   return 0;
 }
 
@@ -732,8 +774,8 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // make sure pci config space command register is acceptable
   uint16_t cmd = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_COMMAND_OFFSET);
-  cmd &= ~0x0400; // turn off interrupt disable
-  cmd |= 0x7;     // make sure bus master, memory, and io space are enabled
+  cmd &= ~0x0400;  // turn off interrupt disable
+  cmd |= 0x7;      // make sure bus master, memory, and io space are enabled
   DEBUG("Writing PCI command register to 0x%x\n", cmd);
   pci_dev_cfg_writew(dev->pci_dev, HDA_PCI_COMMAND_OFFSET, cmd);
 
