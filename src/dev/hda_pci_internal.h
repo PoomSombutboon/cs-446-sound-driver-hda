@@ -363,7 +363,7 @@ typedef union {
 // SDNFMT - Stream Descriptor n Format
 // Specification: section 3.3.41, page 47
 #define SDNFMT 0x92 + (OUTPUT_STREAM_NUM * 0x20)
-#define SDNFMT 0x2
+#define SDNFMT_LEN 0x2
 typedef union {
   uint16_t val;
   struct {
@@ -374,7 +374,7 @@ typedef union {
     uint8_t mult : 3;
     uint8_t base : 1;
     uint8_t resv_2 : 1;
-  }
+  } __attribute__((packed));
 } __attribute__((packed)) sdnfmt_t;
 
 #define BASE_48kHz 0
@@ -393,13 +393,13 @@ typedef union {
 #define DIV_BY_8 7
 // Specification: section 7.3.4.7, page 205
 const uint8_t HDA_SAMPLE_RATES[][3] = {
-    {BASE_48kHz, MULT_BY_0, DIV_BY_6},  // 8.0 kHz
-    {BASE_44kHz1, MULT_BY_0, DIV_BY_4}, // 11.025 kHz
-    {BASE_48kHz, MULT_BY_0, DIV_BY_3},  // 16.0 kHz
-    {BASE_44kHz1, MULT_BY_0, DIV_BY_2}, // 22.05 kHz
+    {BASE_48kHz, MULT_BY_1, DIV_BY_6},  // 8.0 kHz
+    {BASE_44kHz1, MULT_BY_1, DIV_BY_4}, // 11.025 kHz
+    {BASE_48kHz, MULT_BY_1, DIV_BY_3},  // 16.0 kHz
+    {BASE_44kHz1, MULT_BY_1, DIV_BY_2}, // 22.05 kHz
     {BASE_48kHz, MULT_BY_2, DIV_BY_3},  // 32.0 kHz
-    {BASE_44kHz1, MULT_BY_0, DIV_BY_1}, // 44.1 kHz
-    {BASE_48kHz, MULT_BY_0, DIV_BY_1},  // 48.0 kHz
+    {BASE_44kHz1, MULT_BY_1, DIV_BY_1}, // 44.1 kHz
+    {BASE_48kHz, MULT_BY_1, DIV_BY_1},  // 48.0 kHz
     {BASE_44kHz1, MULT_BY_2, DIV_BY_1}, // 88.2 kHz
     {BASE_48kHz, MULT_BY_2, DIV_BY_1},  // 96.0 kHz
     {BASE_44kHz1, MULT_BY_4, DIV_BY_1}, // 176.4 kHz
