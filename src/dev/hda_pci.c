@@ -70,16 +70,49 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
   return 0;
 }
 
-// ========== INTERFACE ==========
+// ========== FORWARD DECLRATION FOR INTERFACE HELPERS ==========
 
 static int check_valid_params(struct hda_pci_dev *dev,
                               struct nk_sound_dev_params *params);
-
-// forward declarations
-static int reset_stream(struct hda_pci_dev *dev);
+static int reset_stream(struct hda_pci_dev *dev,
+                        struct nk_sound_dev_stream *stream);
 static int configure_stream(struct hda_pci_dev *dev,
-                            struct nk_sound_dev_params *p);
+                            struct nk_sound_dev_stream *stream,
+                            struct nk_sound_dev_params *params);
 
+static int initialize_bdl(struct hda_pci_dev *dev,
+                          struct nk_sound_dev_stream *stream, bdl_t *bdl);
+
+// ==================== TEMPORARY FUNCTION =========================
+static int find_avaliable_slot(struct hda_pci_dev *dev,
+                               struct nk_sound_dev_stream *stream) {
+  // find first available stream number
+  // stream numbers range from 1 to 15, inclusive
+  // for (uint8_t i = 1; i <= HDA_MAX_NUM_OF_STREAMS; i++) {
+  //   // stream exists, move onto next stream
+  //   if (dev->streams[i]) {
+  //     continue;
+  //   }
+  //   // create new stream state
+  //   stream = malloc(sizeof(struct nk_sound_dev_stream));
+  //   if (!stream) {
+  //     ERROR("Cannot allocate stream\n");
+  //     return -1;
+  //   }
+  //   DEBUG("Opened new stream %i\n");
+  //   return i;
+  // }
+  // ERROR("No streams available\n");
+  // return -1;
+  stream = malloc(sizeof(struct nk_sound_dev_stream));
+  if (!stream) {
+    ERROR("Cannot allocate a stream\n");
+  }
+  return OUTPUT_STREAM_NUM;
+}
+// ================================================================
+
+// ========== INTERFACE ==========
 int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
 
@@ -103,39 +136,48 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   }
   DEBUG("Valid parameters check completed\n");
 
-  if (reset_stream(dev)) {
-    ERROR("Cannot reset stream descriptor\n");
-    return -1;
+  // TODO: Setting up stream id
+  // ============== TEMP ==============
+  DEBUG("Allocating a stream\n");
+  // Is it ok to do forward declaration like this?
+  struct nk_sound_dev_stream *stream;
+  int slot = find_avaliable_slot(dev, stream);
+  if (slot == -1) {
+    ERROR("Cannot allocate a stream\n");
   }
+  DEBUG("Finished allocating a stream\n");
+  stream->stream_id = slot;
+  // ==================================
 
-  // find first available stream number
-  // stream numbers range from 1 to 15, inclusive
-  for (uint8_t i = 1; i <= HDA_MAX_NUM_OF_STREAMS; i++) {
-    // stream exists, move onto next stream
-    if (dev->streams[i]) {
-      continue;
-    }
-
-    // create new stream state
-    struct nk_sound_dev_stream *stream =
-        malloc(sizeof(struct nk_sound_dev_stream));
-
-    if (!stream) {
-      ERROR("Cannot allocate stream\n");
-      return -1;
-    }
-
-    stream->stream_id = i;
-    stream->params = *params;
-    dev->streams[i] = stream;
-
-    DEBUG("Opened new stream %d\n", dev->streams[i]->stream_id);
-
-    return i;
+  DEBUG("Resetting stream\n");
+  if (reset_stream(dev, stream)) {
+    ERROR("Cannot reset stream\n");
   }
+  DEBUG("Finished resetting stream\n");
 
-  ERROR("No streams available\n");
-  return -1;
+  DEBUG("Configuring stream parameters\n");
+  if (configure_stream(dev, stream, params)) {
+    ERROR("Cannot configure stream parameter\n");
+  }
+  DEBUG("Finished configuring stream parameters\n");
+
+  DEBUG("Initiallizing BDL\n");
+  bdl_t *bdl;
+  if (initialize_bdl(dev, stream, bdl)) {
+    ERROR("Cannot initialize BDL\n");
+  }
+  DEBUG("Finished initializing BDL\n");
+
+  // TODO:
+  // Setup interupt
+
+  struct hda_stream_info *stream_info;
+  stream_info = malloc(sizeof(struct hda_stream_info));
+  stream_info->stream;
+  stream_info->bdl;
+
+  // TODO:
+  // Put the stream info into avaliable slot
 }
 
 int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
@@ -1054,7 +1096,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   params.type = NK_SOUND_DEV_OUTPUT_STREAM;
   params.scale = NK_SOUND_DEV_SCALE_LINEAR;
-  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
+  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_44kHZ1;
   params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
   params.num_of_channels = 2;
 
@@ -1105,16 +1147,20 @@ static int bringup_devices() {
 }
 
 // ========== STREAM HELPER FUNCTIONS ==========
-static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control) {
-  hda_pci_write_regb(dev, SDNCTL, sd_control->byte_1);
-  hda_pci_write_regb(dev, SDNCTL + 1, sd_control->byte_2);
-  hda_pci_write_regb(dev, SDNCTL + 2, sd_control->byte_3);
+static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
+                             uint8_t stream_offset) {
+  uint16_t sdnctl_offset = SDNCTL + stream_offset * STREAM_OFFSET_CONST;
+  hda_pci_write_regb(dev, sdnctl_offset, sd_control->byte_1);
+  hda_pci_write_regb(dev, sdnctl_offset + 1, sd_control->byte_2);
+  hda_pci_write_regb(dev, sdnctl_offset + 2, sd_control->byte_3);
 }
 
-static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control) {
-  sd_control->byte_1 = hda_pci_read_regb(dev, SDNCTL);
-  sd_control->byte_2 = hda_pci_read_regb(dev, SDNCTL + 1);
-  sd_control->byte_3 = hda_pci_read_regb(dev, SDNCTL + 2);
+static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
+                            uint8_t stream_offset) {
+  uint16_t sdnctl_offset = SDNCTL + stream_offset * STREAM_OFFSET_CONST;
+  sd_control->byte_1 = hda_pci_read_regb(dev, sdnctl_offset);
+  sd_control->byte_2 = hda_pci_read_regb(dev, sdnctl_offset + 1);
+  sd_control->byte_3 = hda_pci_read_regb(dev, sdnctl_offset + 2);
 }
 
 static int check_valid_params(struct hda_pci_dev *dev,
@@ -1133,7 +1179,8 @@ static int check_valid_params(struct hda_pci_dev *dev,
   return -1;
 }
 
-static int reset_stream(struct hda_pci_dev *dev) {
+static int reset_stream(struct hda_pci_dev *dev,
+                        struct nk_sound_dev_stream *stream) {
 
   DEBUG("Resetting stream\n");
 
@@ -1142,10 +1189,10 @@ static int reset_stream(struct hda_pci_dev *dev) {
   // specification: section 3.3.35, page 45
   // clear the run bit and reset stream descriptor control by setting srst to 1
   DEBUG("Clearing RUN bit and resetting stream descriptor\n");
-  read_sd_control(dev, &sd_control);
+  read_sd_control(dev, &sd_control, stream->stream_id);
   sd_control.run = 0;
   sd_control.srst = 1;
-  write_sd_control(dev, &sd_control);
+  write_sd_control(dev, &sd_control, stream->stream_id);
 
   // ********** IMPORTANT NOTE **********
   // While testing, we found that the version of QEMU on Moore (version 2.5.0)
@@ -1168,7 +1215,7 @@ static int reset_stream(struct hda_pci_dev *dev) {
   // Uncomment the three lines below if using newer QEMU versions
 
   do {
-    read_sd_control(dev, &sd_control);
+    read_sd_control(dev, &sd_control, stream->stream_id);
   } while (sd_control.srst != 1);
 
   // =================================================================
@@ -1176,21 +1223,21 @@ static int reset_stream(struct hda_pci_dev *dev) {
 
   // do {
   //   read_sd_control(dev, &sd_control);
-  // } while (sd_control.srst != 1);
+  // } while (sd_control.srst == 1);
 
   // =================================================================
 
   // move stream descriptor out of the reset state by setting srst to 0
-  read_sd_control(dev, &sd_control);
+  read_sd_control(dev, &sd_control, stream->stream_id);
   sd_control.srst = 0;
-  write_sd_control(dev, &sd_control);
+  write_sd_control(dev, &sd_control, stream->stream_id);
 
   DEBUG("Taking stream out of reset state\n");
 
   // software must read a 0 from srst before accessing any of the stream
   // registers
   do {
-    read_sd_control(dev, &sd_control);
+    read_sd_control(dev, &sd_control, stream->stream_id);
   } while (sd_control.srst != 0);
 
   DEBUG("Completed reseting stream\n");
@@ -1198,21 +1245,53 @@ static int reset_stream(struct hda_pci_dev *dev) {
 }
 
 static int configure_stream(struct hda_pci_dev *dev,
-                            struct nk_sound_dev_params *p) {
-  DEBUG("Configure stream descriptor with the given parameters\n");
+                            struct nk_sound_dev_stream *stream,
+                            struct nk_sound_dev_params *params) {
+  DEBUG("Configure stream descriptor with given parameters\n");
 
   sdnfmt_t sd_format;
-  sd_format.val = hda_pci_read_regw(dev, SDNFMT);
-  sd_format.chan = p->num_of_channels;
-  sd_format.bits = p->sample_resolution;
-  sd_format.div = HDA_SAMPLE_RATES[p->sample_rate][2];
-  sd_format.mult = HDA_SAMPLE_RATES[p->sample_rate][1];
-  sd_format.base = HDA_SAMPLE_RATES[p->sample_rate][0];
-  hda_pci_write_regw(dev, SDNFMT, sd_format.val);
+  uint16_t sdnfmt_offset = SDNFMT + stream->stream_id * STREAM_OFFSET_CONST;
 
-  sd_format.val = hda_pci_read_regw(dev, SDNFMT);
-  DEBUG("Stream Desciptor Format - SDNFMT: %016x\n", sd_format.val);
+  sd_format.val = hda_pci_read_regw(dev, sdnfmt_offset);
+  sd_format.chan = params->num_of_channels - 1;
+  sd_format.bits = params->sample_resolution;
+  sd_format.div = HDA_SAMPLE_RATES[params->sample_rate][2];
+  sd_format.mult = HDA_SAMPLE_RATES[params->sample_rate][1];
+  sd_format.base = HDA_SAMPLE_RATES[params->sample_rate][0];
+  hda_pci_write_regw(dev, sdnfmt_offset, sd_format.val);
+
+  sd_format.val = hda_pci_read_regw(dev, sdnfmt_offset);
+  DEBUG("Stream Descriptor Format: 0x%x\n", sd_format.val);
   DEBUG("Completed configuring stream descriptor\n");
+  return 0;
+}
+
+static int initialize_bdl(struct hda_pci_dev *dev,
+                          struct nk_sound_dev_stream *stream, bdl_t *bdl) {
+  DEBUG("Allocating space for BDL\n");
+  bdl = malloc(sizeof(bdl_t));
+  if (!bdl) {
+    ERROR("Cannot allocate space for BDL\n");
+    return -1;
+  }
+  DEBUG("Allocated %d bytes for BDL\n", sizeof(bdl));
+  DEBUG("BDL address: 0x%016lx\n", bdl);
+
+  memset(bdl, 0, sizeof(*bdl));
+
+  uint32_t bdl_u = (uint32_t)(((uint64_t)bdl) >> 32);
+  // Note: the previous group use 0xFFFFC0, but from specification the first
+  // 7 (6:0) bits are reserved. Shouldn't we use 0xFFFFFF80 instead?
+  uint32_t bdl_l = ((uint32_t)(((uint64_t)bdl))) & 0xFFFFFF80;
+  uint16_t bdl_upper = SDNBDPU + stream->stream_id * STREAM_OFFSET_CONST;
+  uint16_t bdl_lower = SDNBDPL + stream->stream_id * STREAM_OFFSET_CONST;
+  hda_pci_write_regl(dev, bdl_upper, bdl_u);
+  hda_pci_write_regl(dev, bdl_lower, bdl_l);
+
+  DEBUG("Wrote 0x%08x to BDL upper address\n",
+        hda_pci_read_regl(dev, bdl_upper));
+  DEBUG("Wrote 0x%08x to BDL lower address\n",
+        hda_pci_read_regl(dev, bdl_lower));
   return 0;
 }
 

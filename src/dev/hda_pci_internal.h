@@ -332,14 +332,18 @@ struct available_mode {
   struct nk_sound_dev_params params;
 };
 
-// ========== STREAM MANAGEMNET ==========
+// ========== STREAM CONTROL REGISTERS ==========
 
 // First output stream in QEMU
+// TODO: Remove this hard coded constant
 #define OUTPUT_STREAM_NUM 4
 
+// Specification: 3.3, page 27
+#define STREAM_OFFSET_CONST 0x20
+
 // SDNCTL - Stream Descriptor n Control
-// Specification: secification 3.3.35, page 43
-#define SDNCTL 0x80 + (OUTPUT_STREAM_NUM * 0x20)
+// Specification: 3.3.35, page 43
+#define SDNCTL 0x80
 #define SDNCTL_LEN 0x3
 typedef union {
   struct {
@@ -363,7 +367,7 @@ typedef union {
 
 // SDNFMT - Stream Descriptor n Format
 // Specification: section 3.3.41, page 47
-#define SDNFMT 0x92 + (OUTPUT_STREAM_NUM * 0x20)
+#define SDNFMT 0x92
 #define SDNFMT_LEN 0x2
 typedef union {
   uint16_t val;
@@ -407,6 +411,42 @@ const uint8_t HDA_SAMPLE_RATES[][3] = {
     {BASE_48kHz, MULT_BY_4, DIV_BY_1},  // 192.0 kHz
 };
 
+// SDNBDPL - Stream Descriptor n Lower Base Address
+// Specification: section 3.3.42, page 49
+#define SDNBDPL 0x98
+
+// SDNBDPU - Stream Descriptor n Upper Base Address
+// Specification: section 3.3.43, page 49
+#define SDNBDPU 0x9c
+
+// ========== STREAM MANAGEMENT OBJECTS ==========
+// BDLE - Buffer Descriptor List Entry
+// Specification: 3.6.3, page 55
+typedef struct {
+  uint64_t address : 64;
+  uint32_t length : 32;
+  uint8_t ioc : 1;
+  uint32_t reserved : 31;
+} __attribute__((packed, aligned(128))) bdle_t;
+// Note that BDLE is set to 128-byte align as stated in specification. However,
+// as noted in the prevoius group's paper, page 5, it seems that setting BDLE to
+// 128-byte align causes problems where QEMU only process the first BDLE
+// continuously in the loop or exit immediately. They fixed this issue by
+// setting BDLE to 16-byte alignment since BDLE is 16-byte long.
+
+// BDL - Buffer Descriptor List
+// specification: 3.6.2, page 55
+#define MAX_BDL_ENTIRES 256
+typedef struct {
+  bdle_t buf[MAX_BDL_ENTIRES];
+} __attribute__((aligned(128))) bdl_t;
+
+struct hda_stream_info {
+  struct nk_sound_dev_stream *stream;
+  bdl_t *bdl;
+  // TODO: Not sure if we want to use pointer here
+};
+
 // ========== HDA DEVICE STATES ==========
 
 struct hda_pci_dev {
@@ -445,7 +485,15 @@ struct hda_pci_dev {
   rirb_state_t rirb;
 
   // store all streams
-  struct nk_sound_dev_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
+  // TODO: We probably want to change HDA_MAX_NUM_OF_STREAM to the number of
+  // stream descriptors avalible, right? Since the number of streams seem to
+  // depend on the info from GCAP, so it seems to be dynamic. So, use a
+  // linked-list here again? Another thing that might be worth considering is
+  // whether we should store input and output streams in the same data struture.
+  // If we want to store them in the data structure, we probably only want the
+  // first section to be input and the last section to be output. Or we could
+  // just separate them.
+  struct hda_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
 
   // store available mdoes
   struct list_head available_modes_list;
