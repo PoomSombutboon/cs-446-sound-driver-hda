@@ -8,7 +8,8 @@
 
 // ========== PCI CONFIG SPACE ==========
 
-#define HDA_MAX_NUM_OF_STREAMS 15
+#define HDA_MAX_NUM_OF_STREAMS 30
+#define HDA_MAX_NUM_OF_STREAM_TAGS 16
 
 // ========== PCI CONFIG SPACE ==========
 
@@ -18,6 +19,23 @@
 #define HDA_PCI_STATUS_OFFSET 0x6
 
 // ========== HDA CONTROLLER REGISTER SET ==========
+
+// GCAP - Global Capabilities
+// Specification: section 3.3.2, page 28
+#define GCAP 0x0
+#define GCAP_LEN 0x2
+typedef union gcap {
+  uint16_t val;
+  struct {
+    uint8_t ok64 : 1;
+    uint8_t nsdo : 2;
+    uint8_t bss : 5;
+    uint8_t iss : 4;
+    uint8_t oss : 4;
+#define NUM_SDO(x)                                                             \
+  (((x).nsdo) == 0 ? 1 : ((x).nsdo) == 1 ? 2 : ((x).nsdo) == 2 ? 4 : 0)
+  };
+} __attribute__((packed)) gcap_t;
 
 // GCTL - Global Control
 // Specification: section 3.3.7, page 30
@@ -427,12 +445,7 @@ typedef struct {
   uint32_t length : 32;
   uint8_t ioc : 1;
   uint32_t reserved : 31;
-} __attribute__((packed, aligned(128))) bdle_t;
-// Note that BDLE is set to 128-byte align as stated in specification. However,
-// as noted in the prevoius group's paper, page 5, it seems that setting BDLE to
-// 128-byte align causes problems where QEMU only process the first BDLE
-// continuously in the loop or exit immediately. They fixed this issue by
-// setting BDLE to 16-byte alignment since BDLE is 16-byte long.
+} __attribute__((packed, aligned(16))) bdle_t;
 
 // BDL - Buffer Descriptor List
 // specification: 3.6.2, page 55
@@ -442,9 +455,29 @@ typedef struct {
 } __attribute__((aligned(128))) bdl_t;
 
 struct hda_stream_info {
-  struct nk_sound_dev_stream *stream;
-  bdl_t *bdl;
+  struct nk_sound_dev_stream stream;
+  bdl_t bdl;
   // TODO: Not sure if we want to use pointer here
+
+  // This is one of the 30 possible stream numbers defined in section 3.3.2 of
+  // the specification. There is a maximum of 30 possible streams that can be
+  // supported by Intel HDA: 15 may be configured as output and another 15 as
+  // input.
+  // As defined by the specification, the input streams come first, followed by
+  // the output streams. For example, if we have 5 input streams and 2 output
+  // streams, stream number 0 to 4 will be the input streams and 5 to 6 the
+  // output. IDs can range from 0 to 29.
+  uint8_t stream_id;
+
+  // This refers to the "Tag" associated with the data being transferred on this
+  // link. It is used when setting the "STRM - stream number" bit inside the
+  // SDnCTL register in section 3.3.35 of the specification.
+  // This is used to identify the link a converter is to be used with by the
+  // "Converter Control" as defined in section 7.3.3.11 of the specification.
+  // Because there can only be a maximum of 15 input/output streams, this number
+  // can only range from 1-15. Tag 0 is reserved for "unused" streams by
+  // convention.
+  uint8_t stream_tag;
 };
 
 // ========== HDA DEVICE STATES ==========
@@ -484,16 +517,19 @@ struct hda_pci_dev {
   corb_state_t corb;
   rirb_state_t rirb;
 
-  // store all streams
-  // TODO: We probably want to change HDA_MAX_NUM_OF_STREAM to the number of
-  // stream descriptors avalible, right? Since the number of streams seem to
-  // depend on the info from GCAP, so it seems to be dynamic. So, use a
-  // linked-list here again? Another thing that might be worth considering is
-  // whether we should store input and output streams in the same data struture.
-  // If we want to store them in the data structure, we probably only want the
-  // first section to be input and the last section to be output. Or we could
-  // just separate them.
-  struct hda_stream *streams[HDA_MAX_NUM_OF_STREAMS + 1];
+  // input and output stream number ranges
+  uint8_t input_stream_start;
+  uint8_t input_stream_end;
+  uint8_t output_stream_start;
+  uint8_t output_stream_end;
+
+  // store all streams; the index corresponds to the "stream_id" of whatever
+  // hda_stream_info struct stored at that index
+  struct hda_stream_info *streams[HDA_MAX_NUM_OF_STREAMS];
+
+  // stream tags
+  struct hda_stream_info *output_stream_tags[HDA_MAX_NUM_OF_STREAM_TAGS];
+  struct hda_stream_info *input_stream_tags[HDA_MAX_NUM_OF_STREAM_TAGS];
 
   // store available mdoes
   struct list_head available_modes_list;
