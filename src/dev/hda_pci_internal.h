@@ -333,6 +333,7 @@ struct available_mode {
 };
 
 // ========== STREAM MANAGEMNET ==========
+
 // First output stream in QEMU
 #define OUTPUT_STREAM_NUM 4
 

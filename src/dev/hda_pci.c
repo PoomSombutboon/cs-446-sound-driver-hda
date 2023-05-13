@@ -75,7 +75,10 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 static int check_valid_params(struct hda_pci_dev *dev,
                               struct nk_sound_dev_params *params);
 
+// forward declarations
 static int reset_stream(struct hda_pci_dev *dev);
+static int configure_stream(struct hda_pci_dev *dev,
+                            struct nk_sound_dev_params *p);
 
 int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
@@ -98,10 +101,11 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
     ERROR("Given parameters are not compatible with the device\n");
     return -1;
   }
-  DEBUG("Check completed\n");
+  DEBUG("Valid parameters check completed\n");
 
   if (reset_stream(dev)) {
     ERROR("Cannot reset stream descriptor\n");
+    return -1;
   }
 
   // find first available stream number
@@ -1130,43 +1134,73 @@ static int check_valid_params(struct hda_pci_dev *dev,
 }
 
 static int reset_stream(struct hda_pci_dev *dev) {
+
+  DEBUG("Resetting stream\n");
+
   sdnctl_t sd_control;
 
   // specification: section 3.3.35, page 45
-  // clear the run bit and reset stream descriptor control by setting srst to 1 
+  // clear the run bit and reset stream descriptor control by setting srst to 1
   DEBUG("Clearing RUN bit and resetting stream descriptor\n");
   read_sd_control(dev, &sd_control);
-  // sd_control.run = 0; // RUN bit must be cleared before SRST is asserted
+  sd_control.run = 0;
   sd_control.srst = 1;
   write_sd_control(dev, &sd_control);
-  // software must read a 1 for srst to verify that the stream is reset
-  DEBUG("Verifying that SRST is set to 1\n");
+
+  // ********** IMPORTANT NOTE **********
+  // While testing, we found that the version of QEMU on Moore (version 2.5.0)
+  // seems to have a bug with its implementation of the Intel HDA device.
+  //
+  // More specifically, the srst big in the SDnCTL register does not ever get
+  // set to 1. This is not the expected behavior; after writing "1" to the srst
+  // bit, we expect to see the srst bit get updated to 1 after the device has
+  // finished restting. The software then has to clear this bit to take the
+  // device out of reset.
+  //
+  // Therefore, we have two implementations. Use the first one if you are
+  // running on newer versions of QEMU, which has the correct Intel HDA
+  // behavior. If running this on Moore, use the latter approach. The version
+  // of QEMU we tested the CORRECT behavior with is version 7.2.1.
+
+  DEBUG("Putting stream into reset state\n");
+
+  // =================================================================
+  // Uncomment the three lines below if using newer QEMU versions
+
   do {
     read_sd_control(dev, &sd_control);
-    DEBUG("fkjdslkfdfjklsd %d\n", sd_control.srst);
   } while (sd_control.srst != 1);
-  DEBUG("Verified SRST: %d == 1\n", sd_control.srst);
 
-  // exit stream descriptor from reset state by setting srst to 0
-  DEBUG("Exiting the reset mode and claring RUN bit");
+  // =================================================================
+  // Uncomment the three lines below if using QEMU 2.5.0
+
+  // do {
+  //   read_sd_control(dev, &sd_control);
+  // } while (sd_control.srst != 1);
+
+  // =================================================================
+
+  // move stream descriptor out of the reset state by setting srst to 0
   read_sd_control(dev, &sd_control);
   sd_control.srst = 0;
   write_sd_control(dev, &sd_control);
+
+  DEBUG("Taking stream out of reset state\n");
+
   // software must read a 0 from srst before accessing any of the stream
   // registers
-  DEBUG("Verifying that SRST is set to 0\n");
   do {
     read_sd_control(dev, &sd_control);
   } while (sd_control.srst != 0);
-  DEBUG("Verified SRST: %d == 0\n", sd_control.srst);
 
-  DEBUG("Completed reseting SRST\n");
+  DEBUG("Completed reseting stream\n");
   return 0;
 }
 
 static int configure_stream(struct hda_pci_dev *dev,
                             struct nk_sound_dev_params *p) {
   DEBUG("Configure stream descriptor with the given parameters\n");
+
   sdnfmt_t sd_format;
   sd_format.val = hda_pci_read_regw(dev, SDNFMT);
   sd_format.chan = p->num_of_channels;
