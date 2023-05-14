@@ -74,11 +74,12 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 
 static int check_valid_params(struct hda_pci_dev *dev,
                               struct nk_sound_dev_params *params);
+static int create_new_stream(struct hda_pci_dev *dev,
+                             struct nk_sound_dev_params *params);
 static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id);
-static int create_new_stream(struct hda_pci_dev *dev,
-                             struct nk_sound_dev_params *params);
+static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
 // ========== INTERFACE ==========
 int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
@@ -130,10 +131,7 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   }
   DEBUG("Completed BDL initialization\n");
 
-  // TODO:
-  // Setup interupt
-
-  return 0;
+  return stream_id;
 }
 
 int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
@@ -817,6 +815,9 @@ void print_debug_pcm(uint32_t resp) {
 static int scan_codec(struct hda_pci_dev *d, int codec) {
   DEBUG("Scanning codec %d\n", codec);
 
+  // Store codec ID in device state
+  d->codec_id = codec;
+
   // Initialize available_modes_list, which is what we will use to store all
   // available modes supported by our HDA device
   INIT_LIST_HEAD(&d->available_modes_list);
@@ -871,7 +872,7 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
 
     // we only care about the "Audio Function Group", which is responsible for
     // playing sound
-    if (widget_type != 0x1) {
+    if (widget_type != NODE_TYPE_AUDIO_FUNCTION_GROUP) {
       continue;
     }
 
@@ -922,8 +923,11 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
       DEBUG("      Number of channels: %d\n", num_of_channels);
 
       // if widget is not output or input, skip
-      if (widget_type != WIDGET_TYPE_AUDIO_OUTPUT &&
-          widget_type != WIDGET_TYPE_AUDIO_INPUT) {
+      if (widget_type == WIDGET_TYPE_AUDIO_OUTPUT) {
+        d->audio_output_node_id = curr_widget;
+      } else if (widget_type == WIDGET_TYPE_AUDIO_INPUT) {
+        d->audio_input_node_id = curr_widget;
+      } else {
         continue;
       }
 
@@ -990,6 +994,14 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
       }
     }
   }
+
+  if (!d->audio_output_node_id || !d->audio_output_node_id) {
+    ERROR("Could not find audio input/output widget\n");
+    return -1;
+  }
+
+  DEBUG("Done scanning codecs: output widget %d, input widget %d\n",
+        d->audio_output_node_id, d->audio_input_node_id);
   return 0;
 }
 
@@ -1001,6 +1013,10 @@ static int scan_codecs(struct hda_pci_dev *d) {
         ERROR("Codecs scan failed\n");
         return -1;
       }
+
+      // FOR QEMU, there is only one codec. This should be the first one (at
+      // index 0). We only use the first codec we find.
+      break;
     }
   }
   return 0;
@@ -1085,8 +1101,15 @@ static int bringup_device(struct hda_pci_dev *dev) {
   params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
   params.num_of_channels = 2;
 
-  for (int j = 0; j < 5; j++) {
-    hda_open_stream(dev, &params);
+  for (int j = 0; j < 1; j++) {
+    int stream_id = hda_open_stream(dev, &params);
+    if (stream_id == -1) {
+      ERROR("error lol\n");
+      return -1;
+    }
+    DEBUG("TEST CODE: stream id %d, stream tag %d\n", stream_id,
+          dev->streams[stream_id]->stream_tag);
+    set_output_stream(dev, (uint8_t)stream_id);
   }
 
   struct nk_sound_dev_params available_modes[100];
@@ -1244,6 +1267,8 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
     read_sd_control(dev, &sd_control, stream_id);
   } while (sd_control.srst != 0);
 
+  // clear interrupt enable bits for now; will enable them when running stream
+
   DEBUG("Completed reseting stream %d\n", stream_id);
   return 0;
 }
@@ -1303,8 +1328,10 @@ static int create_new_stream(struct hda_pci_dev *dev,
     stream_tags = dev->output_stream_tags;
   }
 
-  // search for next available stream ID
   uint8_t stream_id;
+  uint8_t stream_tag;
+
+  // search for next available stream ID
   int found_stream_id = 0;
   for (uint8_t i = stream_id_start; i <= stream_id_end; i++) {
     if (dev->streams[i]) {
@@ -1321,7 +1348,6 @@ static int create_new_stream(struct hda_pci_dev *dev,
   }
 
   // search for next available stream tag
-  uint8_t stream_tag;
   int found_stream_tag = 0;
   for (uint8_t i = 1; i < HDA_MAX_NUM_OF_STREAM_TAGS; i++) {
     if (stream_tags[i]) {
@@ -1329,6 +1355,7 @@ static int create_new_stream(struct hda_pci_dev *dev,
     }
     found_stream_tag = 1;
     stream_tag = i;
+    break;
   }
 
   if (!found_stream_tag) {
@@ -1351,5 +1378,33 @@ static int create_new_stream(struct hda_pci_dev *dev,
   dev->streams[stream_id] = stream;
   stream_tags[stream_tag] = stream;
 
+  DEBUG("Created new stream %d tag %d\n", stream->stream_id,
+        stream->stream_tag);
+
   return stream_id;
+}
+
+static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
+  DEBUG("Setting up audio output widget\n");
+
+  codec_resp_t rp;
+
+  outwgctl_t output_wg_ctl;
+  transact(dev, dev->codec_id, dev->audio_output_node_id, 0,
+           MAKE_VERB_8(GET_CONVCTL, 0), &rp);
+  output_wg_ctl.val = (uint8_t)rp.resp;
+  output_wg_ctl.stream = dev->streams[stream_id]->stream_tag;
+  output_wg_ctl.channel = 0;
+
+  transact(dev, dev->codec_id, dev->audio_output_node_id, 0,
+           MAKE_VERB_8(SET_CONVCTL, output_wg_ctl.val), &rp);
+
+  transact(dev, dev->codec_id, dev->audio_output_node_id, 0,
+           MAKE_VERB_8(GET_CONVCTL, 0), &rp);
+  DEBUG(
+      "Node %d converter stream channel: codec %d, stream tag %d, channel %d\n",
+      dev->audio_output_node_id, dev->codec_id, output_wg_ctl.stream,
+      output_wg_ctl.channel);
+
+  return 0;
 }

@@ -226,6 +226,10 @@ typedef union {
 // Specification: section 7.3.3, page 141
 // codec controls (12-bit identifiers)
 #define GET_PARAM 0xf00
+#define GET_CONVCTL 0xf06
+#define SET_CONVCTL 0x706
+#define GET_POWSTATE 0xf05
+#define GET_GAINMUTE 0xb
 
 // Specication: section 7.3.4, page 198
 // codec parameters (4-bit identifiers)
@@ -340,6 +344,14 @@ typedef struct {
   int cur_read;
 } __attribute__((aligned(128))) rirb_state_t;
 
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t channel : 4; // Stream
+    uint8_t stream : 4;  // Channel
+  } __attribute__((packed));
+} __attribute__((packed)) outwgctl_t;
+
 // ========== AVAILABLE MODE NODE ==========
 
 struct available_mode {
@@ -392,11 +404,11 @@ typedef union {
   struct {
     uint8_t chan : 4;
     uint8_t bits : 3;
-    uint8_t resv_1 : 1;
+    uint8_t resv2 : 1;
     uint8_t div : 3;
     uint8_t mult : 3;
     uint8_t base : 1;
-    uint8_t resv_2 : 1;
+    uint8_t resv1 : 1;
   } __attribute__((packed));
 } __attribute__((packed)) sdnfmt_t;
 
@@ -414,6 +426,7 @@ typedef union {
 #define DIV_BY_6 5
 #define DIV_BY_7 6
 #define DIV_BY_8 7
+
 // Specification: section 7.3.4.7, page 205
 const uint8_t HDA_SAMPLE_RATES[][3] = {
     {BASE_48kHz, MULT_BY_1, DIV_BY_6},  // 8.0 kHz
@@ -530,6 +543,11 @@ struct hda_pci_dev {
   // stream tags
   struct hda_stream_info *output_stream_tags[HDA_MAX_NUM_OF_STREAM_TAGS];
   struct hda_stream_info *input_stream_tags[HDA_MAX_NUM_OF_STREAM_TAGS];
+
+  // widget output and input node IDs
+  int codec_id;
+  uint8_t audio_input_node_id;
+  uint8_t audio_output_node_id;
 
   // store available mdoes
   struct list_head available_modes_list;
