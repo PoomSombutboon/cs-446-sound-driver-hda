@@ -26,6 +26,7 @@
 
 #include <dev/hda_pci.h>
 #include <dev/pci.h>
+#include <math.h>
 #include <nautilus/cpu.h>
 #include <nautilus/idt.h>
 #include <nautilus/irq.h>
@@ -50,13 +51,6 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
   return 0;
 }
 
-int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
-                        uint8_t *src, uint64_t len,
-                        void (*callback)(nk_sound_dev_status_t status,
-                                         void *context),
-                        void *context) {
-  return 0;
-}
 int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
                          uint8_t *dst, uint64_t len,
                          void (*callback)(nk_sound_dev_status_t status,
@@ -71,7 +65,10 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 }
 
 // ========== FORWARD DECLRATION FOR INTERFACE HELPERS ==========
-
+static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
+                             uint8_t stream_offset);
+static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
+                            uint8_t stream_offset);
 static int check_valid_params(struct hda_pci_dev *dev,
                               struct nk_sound_dev_params *params);
 static int create_new_stream(struct hda_pci_dev *dev,
@@ -80,7 +77,10 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id);
 static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id);
-
+static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size);
+static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
+                             uint64_t tone_frequency,
+                             uint64_t sampling_frequency);
 // ========== INTERFACE ==========
 int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
@@ -116,18 +116,21 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Initiate stream reset\n");
   if (reset_stream(dev, stream_id)) {
     ERROR("Stream reset failed\n");
+    return -1;
   }
   DEBUG("Stream reset completed\n");
 
   DEBUG("Initiate stream parameters configuring\n");
   if (configure_stream(dev, stream_id)) {
     ERROR("Stream parameters configuring failed\n");
+    return -1;
   }
-  DEBUG("Stream parameters configuring failed\n");
+  DEBUG("Stream parameters configuring completed\n");
 
   DEBUG("Initiate BDL initialization\n");
   if (initialize_bdl(dev, stream_id)) {
     ERROR("BDL initialization failed\n");
+    return -1;
   }
   DEBUG("Completed BDL initialization\n");
 
@@ -164,6 +167,52 @@ int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
   }
 
   DEBUG("Found %d available modes on HDA device %d\n", i, dev->pci_dev->num);
+  return 0;
+}
+
+int hda_write_to_stream(void *state, uint8_t stream_id, uint8_t *src,
+                        uint64_t len,
+                        void (*callback)(nk_sound_dev_status_t status,
+                                         void *context),
+                        void *context) {
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+
+  if (stream_id >= HDA_MAX_NUM_OF_STREAMS || !dev->streams[stream_id]) {
+    ERROR("stream id %d is an invalid stream\n");
+  }
+
+  bdl_t bdl = dev->streams[stream_id]->bdl;
+
+  uint16_t index = 0;
+  uint64_t curr_offset = 0;
+  uint64_t chunksize = 0;
+  while (curr_offset < len) {
+    DEBUG("BDLE address: 0x%016lx\n", &(bdl.buf[index]));
+    chunksize = get_chunk_size(curr_offset, len);
+    bdl.buf[index].reserved = 0;
+    bdl.buf[index].address = (((uint64_t)src) + curr_offset);
+    DEBUG("Audio chunck address: 0x%016lx\n", bdl.buf[index].address);
+    bdl.buf[index].length = chunksize;
+    bdl.buf[index].ioc = 0;
+    index++;
+    curr_offset += chunksize;
+  }
+
+  bdl.buf[index - 1].ioc = 1;
+
+  // set output path to output converter (DAC) from the current stream
+  // descriptor (stream_id)
+  set_output_stream(dev, (uint8_t)stream_id);
+
+  // set interrupt and start running stream
+  sdnctl_t sd_control;
+  read_sd_control(dev, &sd_control, stream_id);
+  sd_control.stripe = 0;
+  sd_control.ioce = 1;
+  sd_control.run = 1;
+  write_sd_control(dev, &sd_control, stream_id);
+  DEBUG("Start running stream %d\n", stream_id);
+
   return 0;
 }
 
@@ -1097,7 +1146,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   params.type = NK_SOUND_DEV_OUTPUT_STREAM;
   params.scale = NK_SOUND_DEV_SCALE_LINEAR;
-  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_44kHZ1;
+  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
   params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
   params.num_of_channels = 2;
 
@@ -1107,9 +1156,15 @@ static int bringup_device(struct hda_pci_dev *dev) {
       ERROR("error lol\n");
       return -1;
     }
-    DEBUG("TEST CODE: stream id %d, stream tag %d\n", stream_id,
-          dev->streams[stream_id]->stream_tag);
-    set_output_stream(dev, (uint8_t)stream_id);
+
+    uint64_t sampling_frequency = 48000;
+    uint32_t duration = 2;
+    uint64_t tone_frequency = 100;
+    uint64_t buf_len = sampling_frequency * duration * 4;
+    uint8_t *buf = (uint8_t *)malloc(buf_len);
+    DEBUG("Create sin wave at: 0x%016lx\n", buf);
+    create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
+    hda_write_to_stream(dev, stream_id, buf, buf_len, 0, 0);
   }
 
   struct nk_sound_dev_params available_modes[100];
@@ -1269,6 +1324,10 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
 
   // clear interrupt enable bits for now; will enable them when running stream
 
+  // set stream tag
+  sd_control.strm_num = dev->streams[stream_id]->stream_tag;
+  write_sd_control(dev, &sd_control, stream_id);
+
   DEBUG("Completed reseting stream %d\n", stream_id);
   return 0;
 }
@@ -1407,4 +1466,32 @@ static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
       output_wg_ctl.channel);
 
   return 0;
+}
+
+static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size) {
+  const uint64_t max_length = 0xFFFFFFFF; // Length is a 32-bit quantity
+  if (current_offset == 0) {
+    return (total_size > max_length)
+               ? max_length
+               : total_size / 2; // Need at least two entries in the BDL
+  } else {
+    uint64_t remaining_size = total_size - current_offset;
+    return (remaining_size > max_length) ? max_length : remaining_size;
+  }
+}
+
+// Assumes 8-bit audio with 2 channels
+static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
+                             uint64_t tone_frequency,
+                             uint64_t sampling_frequency) {
+  for (int i = 0, j = 0; i < buffer_len; i += 4, j++) {
+    double x = (double)j * 2.0 * M_PI * (double)tone_frequency /
+               (double)sampling_frequency;
+    double sin_val = sin(x);
+
+    buffer[i] = 0;
+    buffer[i + 1] = (uint8_t)(sin_val * 127.0);
+    buffer[i + 2] = 0;
+    buffer[i + 3] = (uint8_t)(sin_val * 127.0);
+  }
 }

@@ -118,7 +118,7 @@ struct nk_sound_dev_int {
   int (*close_stream)(void *state, struct nk_sound_dev_stream *stream);
 
   // interface to write/read streams
-  int (*write_to_stream)(void *state, struct nk_sound_dev_stream *stream,
+  int (*write_to_stream)(void *state, uint8_t stream_id,
                          uint8_t *src, uint64_t len,
                          void (*callback)(nk_sound_dev_status_t status,
                                           void *context),
@@ -158,7 +158,7 @@ int nk_sound_dev_close_stream(struct nk_sound_dev *dev,
                               struct nk_sound_dev_stream *stream);
 
 int nk_sound_dev_write_to_stream(
-    struct nk_sound_dev *dev, struct nk_sound_dev_stream *stream, uint8_t *src,
+    struct nk_sound_dev *dev, uint8_t stream_id, uint8_t *src,
     uint64_t len, nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status, void *state), void *state);
 
