@@ -493,6 +493,10 @@ struct hda_stream_info {
   uint8_t stream_tag;
 };
 
+// SDNCBL - Stream Descriptor n Cyclic Buffer Length
+// Specification: section 3.3.38, page 46
+#define SDNCBL 0x88
+
 // ========== HDA DEVICE STATES ==========
 
 struct hda_pci_dev {

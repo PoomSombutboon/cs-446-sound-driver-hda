@@ -65,6 +65,8 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
 }
 
 // ========== FORWARD DECLRATION FOR INTERFACE HELPERS ==========
+static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint32_t data);
 static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
                              uint8_t stream_offset);
 static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
@@ -181,24 +183,30 @@ int hda_write_to_stream(void *state, uint8_t stream_id, uint8_t *src,
     ERROR("stream id %d is an invalid stream\n");
   }
 
-  bdl_t bdl = dev->streams[stream_id]->bdl;
+  bdl_t *bdl = &(dev->streams[stream_id]->bdl);
+
+  // set the length of the buffer
+  DEBUG("Configure stream descriptor cyclic buffer length\n");
+  // TODO: does that mean length (len) is limit at 4 bytes?
+  hda_pci_write_regl(dev, SDNCBL + stream_id * STREAM_OFFSET_CONST,
+                     (uint32_t)len);
 
   uint16_t index = 0;
   uint64_t curr_offset = 0;
   uint64_t chunksize = 0;
   while (curr_offset < len) {
-    DEBUG("BDLE address: 0x%016lx\n", &(bdl.buf[index]));
+    DEBUG("BDLE address: 0x%016lx\n", &(bdl->buf[index]));
     chunksize = get_chunk_size(curr_offset, len);
-    bdl.buf[index].reserved = 0;
-    bdl.buf[index].address = (((uint64_t)src) + curr_offset);
-    DEBUG("Audio chunck address: 0x%016lx\n", bdl.buf[index].address);
-    bdl.buf[index].length = chunksize;
-    bdl.buf[index].ioc = 0;
+    bdl->buf[index].reserved = 0;
+    bdl->buf[index].address = (((uint64_t)src) + curr_offset);
+    DEBUG("Audio chunck address: 0x%016lx\n", bdl->buf[index].address);
+    bdl->buf[index].length = chunksize;
+    bdl->buf[index].ioc = 0;
     index++;
     curr_offset += chunksize;
   }
 
-  bdl.buf[index - 1].ioc = 1;
+  bdl->buf[index - 1].ioc = 1;
 
   // set output path to output converter (DAC) from the current stream
   // descriptor (stream_id)
@@ -1370,6 +1378,9 @@ static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id) {
         hda_pci_read_regl(dev, bdl_upper));
   DEBUG("Wrote 0x%08x to BDL lower address\n",
         hda_pci_read_regl(dev, bdl_lower));
+
+  DEBUG("\n\nSTREAM %d\n", stream_id);
+  DEBUG("FIRST BDLE: 0x%016lx\n\n", &(dev->streams[stream_id]->bdl.buf[0]));
   return 0;
 }
 
