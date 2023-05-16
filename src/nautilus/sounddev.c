@@ -86,8 +86,9 @@ int nk_sound_dev_get_avaiable_modes(struct nk_sound_dev *dev,
   return di->get_avaiable_modes(d->state, params, params_size);
 }
 
-int nk_sound_dev_open_stream(struct nk_sound_dev *dev,
-                             struct nk_sound_dev_params *params) {
+struct nk_sound_dev_stream *
+nk_sound_dev_open_stream(struct nk_sound_dev *dev,
+                         struct nk_sound_dev_params *params) {
   struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
   return di->open_stream(d->state, params);
@@ -129,14 +130,14 @@ static int generic_cond_check(void *state) {
 }
 
 int nk_sound_dev_write_to_stream(
-    struct nk_sound_dev *dev, uint8_t stream_id, uint8_t *src,
-    uint64_t len, nk_dev_request_type_t type,
+    struct nk_sound_dev *dev, uint8_t stream_id, uint8_t *src, uint64_t len,
+    nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status, void *state), void *state) {
-  //if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
-  //  DEBUG("write sound not possible, stream is of type "
-  //        "NK_SOUND_DEV_INPUT_STREAM\n");
-  //  return -1;
-  //}
+  // if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
+  //   DEBUG("write sound not possible, stream is of type "
+  //         "NK_SOUND_DEV_INPUT_STREAM\n");
+  //   return -1;
+  // }
 
   struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
@@ -147,7 +148,8 @@ int nk_sound_dev_write_to_stream(
       DEBUG("write sound not possible\n");
       return -1;
     } else {
-      return di->write_to_stream(d->state, stream_id, src, len, callback, state);
+      return di->write_to_stream(d->state, stream_id, src, len, callback,
+                                 state);
     }
     break;
   case NK_DEV_REQ_BLOCKING:

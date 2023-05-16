@@ -84,17 +84,18 @@ static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
                              uint64_t tone_frequency,
                              uint64_t sampling_frequency);
 // ========== INTERFACE ==========
-int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
+struct nk_sound_dev_stream *
+hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
 
   if (!state) {
     ERROR("The device state pointer is null\n");
-    return -1;
+    return NULL;
   }
 
   if (!params) {
     ERROR("The device parameters pointer is null\n");
-    return -1;
+    return NULL;
   }
 
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
@@ -102,7 +103,7 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Initiate parameters check\n");
   if (check_valid_params(dev, params)) {
     ERROR("Parameters check failed\n");
-    return -1;
+    return NULL;
   }
   DEBUG("Parameters check completed\n");
 
@@ -110,7 +111,7 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   int new_stream_id = create_new_stream(dev, params);
   if (new_stream_id == -1) {
     ERROR("New stream allocation failed\n");
-    return -1;
+    return NULL;
   }
   uint8_t stream_id = (uint8_t)new_stream_id;
   DEBUG("New stream allocation completed\n");
@@ -118,25 +119,25 @@ int hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Initiate stream reset\n");
   if (reset_stream(dev, stream_id)) {
     ERROR("Stream reset failed\n");
-    return -1;
+    return NULL;
   }
   DEBUG("Stream reset completed\n");
 
   DEBUG("Initiate stream parameters configuring\n");
   if (configure_stream(dev, stream_id)) {
     ERROR("Stream parameters configuring failed\n");
-    return -1;
+    return NULL;
   }
   DEBUG("Stream parameters configuring completed\n");
 
   DEBUG("Initiate BDL initialization\n");
   if (initialize_bdl(dev, stream_id)) {
     ERROR("BDL initialization failed\n");
-    return -1;
+    return NULL;
   }
   DEBUG("Completed BDL initialization\n");
 
-  return stream_id;
+  return &dev->streams[stream_id]->stream;
 }
 
 int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
@@ -1159,12 +1160,12 @@ static int bringup_device(struct hda_pci_dev *dev) {
   params.num_of_channels = 2;
 
   for (int j = 0; j < 1; j++) {
-    int stream_id = hda_open_stream(dev, &params);
-    if (stream_id == -1) {
+    struct nk_sound_dev_stream *stream = hda_open_stream(dev, &params);
+    if (!stream) {
       ERROR("error lol\n");
       return -1;
     }
-
+    int stream_id = stream->stream_id;
     uint64_t sampling_frequency = 48000;
     uint32_t duration = 2;
     uint64_t tone_frequency = 100;

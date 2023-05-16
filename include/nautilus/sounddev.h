@@ -114,12 +114,13 @@ struct nk_sound_dev_int {
                             uint32_t params_size);
 
   // interface to open/close streams
-  int (*open_stream)(void *state, struct nk_sound_dev_params *params);
+  struct nk_sound_dev_stream *(*open_stream)(
+      void *state, struct nk_sound_dev_params *params);
   int (*close_stream)(void *state, struct nk_sound_dev_stream *stream);
 
   // interface to write/read streams
-  int (*write_to_stream)(void *state, uint8_t stream_id,
-                         uint8_t *src, uint64_t len,
+  int (*write_to_stream)(void *state, uint8_t stream_id, uint8_t *src,
+                         uint64_t len,
                          void (*callback)(nk_sound_dev_status_t status,
                                           void *context),
                          void *context);
@@ -152,14 +153,15 @@ struct nk_sound_dev *nk_sound_dev_find(char *name);
 int nk_sound_dev_get_avaliable_modes(struct nk_sound_dev *dev,
                                      struct nk_sound_dev_params params[]);
 
-int nk_sound_dev_open_stream(struct nk_sound_dev *dev,
-                             struct nk_sound_dev_params *params);
+struct nk_sound_dev_stream *
+nk_sound_dev_open_stream(struct nk_sound_dev *dev,
+                         struct nk_sound_dev_params *params);
 int nk_sound_dev_close_stream(struct nk_sound_dev *dev,
                               struct nk_sound_dev_stream *stream);
 
 int nk_sound_dev_write_to_stream(
-    struct nk_sound_dev *dev, uint8_t stream_id, uint8_t *src,
-    uint64_t len, nk_dev_request_type_t type,
+    struct nk_sound_dev *dev, uint8_t stream_id, uint8_t *src, uint64_t len,
+    nk_dev_request_type_t type,
     void (*callback)(nk_sound_dev_status_t status, void *state), void *state);
 
 int nk_sound_dev_read_to_stream(
