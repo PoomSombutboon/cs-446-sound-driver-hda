@@ -39,8 +39,7 @@
 
 #include "hda_pci_internal.h"
 
-// ========== TEMPORARY FUNCTION ==========
-// TODO: REMOVE AFTER
+// ========== FUNCTIONS TO IMPLEMENT ==========
 
 static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
   DEBUG("**** INSIDE HANDLER ****\n");
@@ -181,12 +180,13 @@ int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
   return 0;
 }
 
-int hda_write_to_stream(void *state, uint8_t stream_id, uint8_t *src,
-                        uint64_t len,
+int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
+                        uint8_t *src, uint64_t len,
                         void (*callback)(nk_sound_dev_status_t status,
                                          void *context),
                         void *context) {
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+  uint8_t stream_id = stream->stream_id;
 
   if (stream_id >= HDA_MAX_NUM_OF_STREAMS || !dev->streams[stream_id]) {
     ERROR("stream id %d is an invalid stream\n");
@@ -1222,7 +1222,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
     uint8_t *buf = (uint8_t *)malloc(buf_len);
     DEBUG("Create sin wave at: 0x%016lx\n", buf);
     create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
-    hda_write_to_stream(dev, stream_id, buf, buf_len, 0, 0);
+    hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
   }
 
   struct nk_sound_dev_params available_modes[100];
