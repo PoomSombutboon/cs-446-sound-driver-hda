@@ -56,34 +56,42 @@ int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
                          void (*callback)(nk_sound_dev_status_t status,
                                           void *context),
                          void *context) {
-  return 0;
-}
-
-int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
-                          struct nk_sound_dev_params *p) {
-  return 0;
+  return -1;
 }
 
 // ========== FORWARD DECLRATION FOR INTERFACE HELPERS ==========
+
 static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
                                       uint32_t data);
+
 static void write_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
                              uint8_t stream_offset);
+
 static void read_sd_control(struct hda_pci_dev *dev, sdnctl_t *sd_control,
                             uint8_t stream_offset);
+
 static int check_valid_params(struct hda_pci_dev *dev,
                               struct nk_sound_dev_params *params);
+
 static int create_new_stream(struct hda_pci_dev *dev,
                              struct nk_sound_dev_params *params);
+
 static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id);
+
 static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id);
+
 static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id);
+
 static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id);
+
 static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size);
+
 static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
                              uint64_t tone_frequency,
                              uint64_t sampling_frequency);
+
 // ========== INTERFACE ==========
+
 struct nk_sound_dev_stream *
 hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("Opening new stream\n");
@@ -221,6 +229,28 @@ int hda_write_to_stream(void *state, uint8_t stream_id, uint8_t *src,
   sd_control.run = 1;
   write_sd_control(dev, &sd_control, stream_id);
   DEBUG("Start running stream %d\n", stream_id);
+
+  return 0;
+}
+
+int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
+                          struct nk_sound_dev_params *p) {
+  DEBUG("Getting stream parameters from stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!p) {
+    ERROR("The device parameters pointer is null\n");
+    return -1;
+  }
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+
+  struct hda_stream_info *hda_stream = dev->streams[stream->stream_id];
+  *p = hda_stream->stream.params;
 
   return 0;
 }
