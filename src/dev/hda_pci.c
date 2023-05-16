@@ -539,7 +539,7 @@ static int reset(struct hda_pci_dev *d) {
   gctl.crst = 0;
   hda_pci_write_regl(d, GCTL, gctl.val);
 
-  DEBUG("Initiate HDA reset, gctl = %08x\n", gctl.val);
+  DEBUG("Resetting HDA device, gctl = %08x\n", gctl.val);
 
   // write 1 to the CRST bit to take controller out of reset
   // CRST bit will remain as 0 until reset is complete
@@ -553,7 +553,7 @@ static int reset(struct hda_pci_dev *d) {
   } while (gctl.crst != 1);
   gctl.val = hda_pci_read_regl(d, GCTL);
 
-  DEBUG("Reset completed, gctl = %08x\n", gctl.val);
+  DEBUG("HDA device has been reset, gctl = %08x\n", gctl.val);
   return 0;
 }
 
@@ -578,7 +578,7 @@ static int discover_codecs(struct hda_pci_dev *d) {
   }
 
   if (!found) {
-    ERROR("Failed to find any codecs");
+    ERROR("Did not find any codecs from SDI, statests = %x\n", statests.val);
     return -1;
   }
 
@@ -596,7 +596,7 @@ static int setup_corb(struct hda_pci_dev *d) {
   cc.val = hda_pci_read_regb(d, CORBCTL);
   cc.corbrun = 0;
   hda_pci_write_regb(d, CORBCTL, cc.val);
-  DEBUG("CORB turned off\n");
+  DEBUG("Turning off CORB DMA engine\n");
 
   // determine and configure CORB size on HDA device
   cs.val = hda_pci_read_regb(d, CORBSIZE);
@@ -657,7 +657,7 @@ static int setup_corb(struct hda_pci_dev *d) {
   cc.corbrun = 1;
   hda_pci_write_regb(d, CORBCTL, cc.val);
 
-  DEBUG("CORB turned on\n");
+  DEBUG("Turned on CORB DMA engine\n");
 
   return 0;
 }
@@ -672,7 +672,7 @@ static int setup_rirb(struct hda_pci_dev *d) {
   rc.val = hda_pci_read_regb(d, RIRBCTL);
   rc.rirbdmaen = 0;
   hda_pci_write_regb(d, RIRBCTL, rc.val);
-  DEBUG("RIRB turned off\n");
+  DEBUG("Turned off RIRB DMA engine\n");
 
   // determine RIRB size and allocate RIRB buffer in memory
   rs.val = hda_pci_read_regb(d, RIRBSIZE);
@@ -728,7 +728,7 @@ static int setup_rirb(struct hda_pci_dev *d) {
   rc.rintctl = 0; // interrupt after N number of responses
   hda_pci_write_regb(d, RIRBCTL, rc.val);
 
-  DEBUG("RIRB turned on\n");
+  DEBUG("Turned on RIRB DMA engine\n");
 
   return 0;
 }
@@ -873,9 +873,6 @@ void print_debug_pcm(uint32_t resp) {
 static int scan_codec(struct hda_pci_dev *d, int codec) {
   DEBUG("Scanning codec %d\n", codec);
 
-  // Store codec ID in device state
-  d->codec_id = codec;
-
   // Initialize available_modes_list, which is what we will use to store all
   // available modes supported by our HDA device
   INIT_LIST_HEAD(&d->available_modes_list);
@@ -980,12 +977,30 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
       uint8_t num_of_channels = 1 + (((rp.resp >> 12) & 0xe) | (rp.resp & 0x1));
       DEBUG("      Number of channels: %d\n", num_of_channels);
 
-      // if widget is not output or input, skip
-      if (widget_type == WIDGET_TYPE_AUDIO_OUTPUT) {
+      // if widgets are OUTPUT, INPUT, or PIN, store pin numbers; otherwise skip
+      switch (widget_type) {
+      case WIDGET_TYPE_AUDIO_OUTPUT:
         d->audio_output_node_id = curr_widget;
-      } else if (widget_type == WIDGET_TYPE_AUDIO_INPUT) {
+        break;
+
+      case WIDGET_TYPE_AUDIO_INPUT:
         d->audio_input_node_id = curr_widget;
-      } else {
+        // find the pin complex to the input converter (ADC)
+        transact(d, codec, curr_widget, 0, MAKE_VERB_8(GET_CONLIST, 0), &rp);
+        if (rp.resp & 0xff) {
+          d->input_pin_node_id = rp.resp & 0xff;
+        }
+        break;
+
+      case WIDGET_TYPE_PIN_COMPLEX:
+        // see if this pin complex is the one connected to ouput converter (DAC)
+        transact(d, codec, curr_widget, 0, MAKE_VERB_8(GET_CONLIST, 0), &rp);
+        if (rp.resp & 0xff) {
+          d->output_pin_node_id = curr_widget;
+        }
+        continue;
+
+      default:
         continue;
       }
 
@@ -997,7 +1012,7 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
         DEBUG("      Supports PCM\n");
       } else {
         ERROR("      Does not support PCM\n");
-        continue;
+        return -1;
       }
 
       // get sample rate and bits per sample
@@ -1042,8 +1057,8 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
             mode->params = params;
             list_add(&mode->node, &d->available_modes_list);
 
-            DEBUG("Added new available mode: type %d channels %d sample_rate "
-                  "%d sample_resolution %d scale %d\n",
+            DEBUG("      Added new available mode: type %d channels %d "
+                  "sample_rate %d sample_resolution %d scale %d\n",
                   mode->params.type, mode->params.num_of_channels,
                   mode->params.sample_rate, mode->params.sample_resolution,
                   mode->params.scale);
@@ -1058,13 +1073,16 @@ static int scan_codec(struct hda_pci_dev *d, int codec) {
     return -1;
   }
 
-  DEBUG("Done scanning codecs: output widget %d, input widget %d\n",
-        d->audio_output_node_id, d->audio_input_node_id);
+  DEBUG("Widget IDs:\n");
+  DEBUG("  output converter: %d\n", d->audio_output_node_id);
+  DEBUG("  output pin: %d\n", d->output_pin_node_id);
+  DEBUG("  input converter: %d\n", d->audio_input_node_id);
+  DEBUG("  input pin: %d\n", d->input_pin_node_id);
   return 0;
 }
 
 static int scan_codecs(struct hda_pci_dev *d) {
-  DEBUG("Scanning for all codecs\n");
+  DEBUG("Scanning for codecs\n");
   for (int i = 0; i < SDIMAX; i++) {
     if (d->codecs[i]) {
       if (scan_codec(d, i)) {
@@ -1074,6 +1092,7 @@ static int scan_codecs(struct hda_pci_dev *d) {
 
       // FOR QEMU, there is only one codec. This should be the first one (at
       // index 0). We only use the first codec we find.
+      d->codec_id = i;
       break;
     }
   }
@@ -1100,54 +1119,54 @@ static int bringup_device(struct hda_pci_dev *dev) {
   uint16_t status = pci_dev_cfg_readw(dev->pci_dev, HDA_PCI_STATUS_OFFSET);
   DEBUG("Reading PCI status register as 0x%x\n", status);
 
-  DEBUG("Initiate HDA device capabilities retrieval\n");
+  DEBUG("INITIATE: get_global_caps()\n");
   if (get_global_caps(dev)) {
-    ERROR("HD device capabilities retrieval failed\n");
+    ERROR("FAILED: get_gloal_caps()\n");
     return -1;
   }
-  DEBUG("HDA device capabilities retrieval completed\n");
+  DEBUG("COMPLETED: get_gloal_caps() completed\n");
 
-  DEBUG("Initiate HDA device reset\n");
+  DEBUG("INITIATE: reset()\n");
   if (reset(dev)) {
-    ERROR("HDA device reset failed\n");
+    ERROR("FAILED: reset()\n");
     return -1;
   }
-  DEBUG("HDA device reset completed\n");
+  DEBUG("COMPLETED: reset()\n");
 
-  DEBUG("Initiate codec discovery\n");
+  DEBUG("INITIATE: discover_codecs()\n");
   if (discover_codecs(dev)) {
-    ERROR("Codec discovery failed\n");
+    ERROR("FAILED: discover_codecs()\n");
     return -1;
   }
-  DEBUG("Codec discovery completed\n");
+  DEBUG("COMPLETED: discover_codecs()\n");
 
-  DEBUG("Initiate CORB setup\n");
+  DEBUG("INITIATE: setup_corb()\n");
   if (setup_corb(dev)) {
-    ERROR("CORB setup failed\n");
+    ERROR("FAILED: setup_corb()\n");
     return -1;
   }
-  DEBUG("CORB setup completed\n");
+  DEBUG("COMPLETED: setup_corb()\n");
 
-  DEBUG("Initate RIRB setup\n");
+  DEBUG("INITIATE: setup_rirb()\n");
   if (setup_rirb(dev)) {
-    ERROR("RIRB setup failed\n");
+    ERROR("FAILED: setup_rirb()\n");
     return -1;
   }
-  DEBUG("RIRB setup completed\n");
+  DEBUG("COMPLETED: setup_rirb()\n");
 
-  DEBUG("Initiate interrupts setup\n");
+  DEBUG("INITIATE: setup_interrupts()\n");
   if (setup_interrupts(dev)) {
-    ERROR("Interrupts setup failed\n");
+    ERROR("FAILED: setup_interrupts()");
     return -1;
   }
-  DEBUG("Interrupts setup completed\n");
+  DEBUG("COMPLETED: setup_interrupts()\n");
 
-  DEBUG("Initiate codecs scan\n");
+  DEBUG("INITIATE: scan_codecs()\n");
   if (scan_codecs(dev)) {
-    ERROR("Codecs scan failed\n");
+    ERROR("FAILED: scan_codecs()\n");
     return -1;
   }
-  DEBUG("Codecs scan completed\n");
+  DEBUG("COMPLETED: scan_codecs()\n");
 
   // ========== TEST CODE, REMOVE AFTER ==========
 
@@ -1380,8 +1399,6 @@ static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id) {
   DEBUG("Wrote 0x%08x to BDL lower address\n",
         hda_pci_read_regl(dev, bdl_lower));
 
-  DEBUG("\n\nSTREAM %d\n", stream_id);
-  DEBUG("FIRST BDLE: 0x%016lx\n\n", &(dev->streams[stream_id]->bdl.buf[0]));
   return 0;
 }
 

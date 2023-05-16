@@ -226,6 +226,7 @@ typedef union {
 // Specification: section 7.3.3, page 141
 // codec controls (12-bit identifiers)
 #define GET_PARAM 0xf00
+#define GET_CONLIST 0xf02
 #define GET_CONVCTL 0xf06
 #define SET_CONVCTL 0x706
 #define GET_POWSTATE 0xf05
@@ -470,7 +471,6 @@ typedef struct {
 struct hda_stream_info {
   struct nk_sound_dev_stream stream;
   bdl_t bdl;
-  // TODO: Not sure if we want to use pointer here
 
   // This is one of the 30 possible stream numbers defined in section 3.3.2 of
   // the specification. There is a maximum of 30 possible streams that can be
@@ -551,7 +551,9 @@ struct hda_pci_dev {
   // widget output and input node IDs
   int codec_id;
   uint8_t audio_input_node_id;
+  uint8_t input_pin_node_id;
   uint8_t audio_output_node_id;
+  uint8_t output_pin_node_id;
 
   // store available mdoes
   struct list_head available_modes_list;
