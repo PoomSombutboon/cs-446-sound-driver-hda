@@ -47,7 +47,7 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
 }
 
 int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
-  return 0;
+  return -1;
 }
 
 int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
@@ -89,6 +89,80 @@ static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size);
 static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
                              uint64_t tone_frequency,
                              uint64_t sampling_frequency);
+
+// ========== READ AND WRITE REGISTERS ==========
+
+static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
+                                         uint32_t offset) {
+  uint32_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inl(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readl 0x%08x returns 0x%08x\n", offset, result);
+  return result;
+}
+
+static inline uint16_t hda_pci_read_regw(struct hda_pci_dev *dev,
+                                         uint32_t offset) {
+  uint16_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inw(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readw 0x%08x returns 0x%04x\n", offset, result);
+  return result;
+}
+
+static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
+                                        uint32_t offset) {
+  uint8_t result;
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
+  } else {
+    result = inb(dev->ioport_start + offset);
+  }
+  DEBUG_REGS("readb 0x%08x returns 0x%02x\n", offset, result);
+  return result;
+}
+
+static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint32_t data) {
+  DEBUG_REGS("writel 0x%08x with 0x%08x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outl(data, dev->ioport_start + offset);
+  }
+}
+
+static inline void hda_pci_write_regw(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint16_t data) {
+  DEBUG_REGS("writew 0x%08x with 0x%04x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outw(data, dev->ioport_start + offset);
+  }
+}
+
+static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
+                                      uint8_t data) {
+  DEBUG_REGS("writeb 0x%08x with 0x%02x\n", offset, data);
+  if (dev->method == MEMORY) {
+    uint64_t addr = dev->mem_start + offset;
+    __asm__ __volatile__("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
+  } else {
+    outb(data, dev->ioport_start + offset);
+  }
+}
 
 // ========== INTERFACE ==========
 
@@ -179,6 +253,18 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
                         void (*callback)(nk_sound_dev_status_t status,
                                          void *context),
                         void *context) {
+  DEBUG("Writing to stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!stream) {
+    ERROR("The stream pointer is null\n");
+    return -1;
+  }
+
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
   uint8_t stream_id = stream->stream_id;
 
@@ -191,41 +277,9 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
   DEBUG("Initiate BDL initialization\n");
   if (initialize_bdl(dev, stream_id, src, len)) {
     ERROR("BDL initialization failed\n");
-    return NULL;
+    return -1;
   }
   DEBUG("Completed BDL initialization\n");
-
-  // set the length of the buffer
-  DEBUG("Configure stream descriptor cyclic buffer length\n");
-  // TODO: does that mean length (len) is limit at 4 bytes?
-  hda_pci_write_regl(dev, SDNCBL + stream_id * STREAM_OFFSET_CONST,
-                     (uint32_t)len);
-
-  // set output path to output converter (DAC) from the current stream
-  // descriptor (stream_id)
-  set_output_stream(dev, (uint8_t)stream_id);
-
-  // TODO: Handle play current BDL
-  // - If run bit has not been set, we set the run
-  //   we put set the upper and lower BDL to current stream descriptor
-  // - we turn off the run bit, do the reset, pop the current BDL from
-  //   the ring buffer, and use the next BDL (if exist) to set upper and lower
-  //   BDL bit of stream descriptor in the interupt handler when ioc raise an
-  //   interupt.
-  // - To pop, we check
-  //   - we check if the ring buffer is empty, if it is return error - 1
-  //   - else, we set element in bdls_start_index to None, decrement
-  //   bdls_length, and advance the bdls_start_index by
-  //   - bdls_start_index = (bdls_start_index + 1) % HDA_MAX_NUM_OF_BDLS
-
-  // set interrupt and start running stream
-  // sdnctl_t sd_control;
-  // read_sd_control(dev, &sd_control, stream_id);
-  // sd_control.stripe = 0;
-  // sd_control.ioce = 1;
-  // sd_control.run = 1;
-  // write_sd_control(dev, &sd_control, stream_id);
-  // DEBUG("Start running stream %d\n", stream_id);
 
   return 0;
 }
@@ -252,6 +306,89 @@ int hda_get_stream_params(void *state, struct nk_sound_dev_stream *stream,
   return 0;
 }
 
+int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
+  DEBUG("Playing from stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!stream) {
+    ERROR("The stream pointer is null\n");
+    return -1;
+  }
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+  uint8_t stream_id = stream->stream_id;
+
+  // if stream is already running, do nothing
+  sdnctl_t sd_control;
+  read_sd_control(dev, &sd_control, stream_id);
+  if (sd_control.run) {
+    return 0;
+  }
+
+  // if other stream is currently running, stop and reset it
+  if (dev->current_stream != 255) {
+    if (reset_stream(dev, dev->current_stream)) {
+      ERROR("Cannot reset old stream %d", dev->current_stream);
+      return -1;
+    }
+  }
+
+  // reset new stream
+  if (reset_stream(dev, stream_id)) {
+    ERROR("Cannot reset new stream %d", stream_id);
+    return -1;
+  }
+
+  // configure stream
+  if (configure_stream(dev, stream_id)) {
+    ERROR("Stream parameters configuring failed\n");
+    return -1;
+  }
+
+  // set the length of the buffer
+  DEBUG("Configure stream descriptor cyclic buffer length\n");
+  hda_pci_write_regl(dev, SDNCBL + stream_id * STREAM_OFFSET_CONST,
+                     dev->streams[stream_id]->bdls_size[0]);
+
+  // set output path to output converter (DAC) from the current stream
+  // descriptor (stream_id)
+  set_output_stream(dev, (uint8_t)stream_id);
+
+  // set DMA engine to run first BDL in the stream's ring buffer
+  bdl_t *bdl = dev->streams[stream_id]->bdls[0];
+  uint32_t bdl_u = (uint32_t)(((uint64_t)bdl) >> 32);
+  uint32_t bdl_l = ((uint32_t)(((uint64_t)bdl))) & 0xFFFF80;
+  uint16_t bdl_upper = SDNBDPU + stream_id * STREAM_OFFSET_CONST;
+  uint16_t bdl_lower = SDNBDPL + stream_id * STREAM_OFFSET_CONST;
+  hda_pci_write_regl(dev, bdl_upper, bdl_u);
+  hda_pci_write_regl(dev, bdl_lower, bdl_l);
+
+  /* program the stream LVI (last valid index) of the BDL */
+  uint16_t lvi_offset = SDNLVI + stream_id * STREAM_OFFSET_CONST;
+  sdnlvi_t lvi;
+  lvi.val = hda_pci_read_regw(dev, lvi_offset);
+  DEBUG("Last Valid Index Read: 0x%04x\n", lvi);
+  lvi.lvi = dev->streams[stream_id]->bdls_lvi[0];
+  hda_pci_write_regw(dev, lvi_offset, lvi.val);
+
+  lvi.val = hda_pci_read_regw(dev, lvi_offset);
+  DEBUG("LVI Read: 0x%04x\n", lvi.val);
+
+  // set interrupt and start running stream
+  read_sd_control(dev, &sd_control, stream_id);
+  sd_control.stripe = 0;
+  sd_control.ioce = 1;
+  sd_control.run = 1;
+  write_sd_control(dev, &sd_control, stream_id);
+
+  dev->current_stream = stream_id;
+  return 0;
+}
+
 // ========== GLOBAL FIELDS ==========
 
 // for protection of global state in the driver
@@ -271,78 +408,6 @@ static struct nk_sound_dev_int ops = {
 };
 
 // ========== METHODS ==========
-
-static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
-                                         uint32_t offset) {
-  uint32_t result;
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-  } else {
-    result = inl(dev->ioport_start + offset);
-  }
-  DEBUG_REGS("readl 0x%08x returns 0x%08x\n", offset, result);
-  return result;
-}
-
-static inline uint16_t hda_pci_read_regw(struct hda_pci_dev *dev,
-                                         uint32_t offset) {
-  uint16_t result;
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-  } else {
-    result = inw(dev->ioport_start + offset);
-  }
-  DEBUG_REGS("readw 0x%08x returns 0x%04x\n", offset, result);
-  return result;
-}
-
-static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
-                                        uint32_t offset) {
-  uint8_t result;
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb (%1), %0" : "=r"(result) : "r"(addr) : "memory");
-  } else {
-    result = inb(dev->ioport_start + offset);
-  }
-  DEBUG_REGS("readb 0x%08x returns 0x%02x\n", offset, result);
-  return result;
-}
-
-static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
-                                      uint32_t data) {
-  DEBUG_REGS("writel 0x%08x with 0x%08x\n", offset, data);
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movl %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-  } else {
-    outl(data, dev->ioport_start + offset);
-  }
-}
-
-static inline void hda_pci_write_regw(struct hda_pci_dev *dev, uint32_t offset,
-                                      uint16_t data) {
-  DEBUG_REGS("writew 0x%08x with 0x%04x\n", offset, data);
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movw %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-  } else {
-    outw(data, dev->ioport_start + offset);
-  }
-}
-
-static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
-                                      uint8_t data) {
-  DEBUG_REGS("writeb 0x%08x with 0x%02x\n", offset, data);
-  if (dev->method == MEMORY) {
-    uint64_t addr = dev->mem_start + offset;
-    __asm__ __volatile__("movb %1, (%0)" : : "r"(addr), "r"(data) : "memory");
-  } else {
-    outb(data, dev->ioport_start + offset);
-  }
-}
 
 // search for all HDA devices on the PCI bus
 static int discover_devices(struct pci_info *pci) {
@@ -465,6 +530,8 @@ static int discover_devices(struct pci_info *pci) {
         }
 
         hdev->pci_dev = pdev;
+        // 255 (or -1) to indicate that no stream is currently running
+        hdev->current_stream = 255;
 
         INFO("Found HDA device: bus=%u dev=%u func=%u: pci_intr=%u "
              "intr_vec=%u ioport_start=%p ioport_end=%p mem_start=%p "
@@ -1271,7 +1338,7 @@ int hda_pci_init(struct naut_info *naut) {
 
   if (discover_devices(naut->sys.pci)) {
     ERROR("Discovery failed\n");
-    return;
+    return -1;
   }
 
   return bringup_devices();
@@ -1411,25 +1478,31 @@ static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
 static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
                           uint8_t *src, uint64_t len) {
   struct hda_stream_info *hda_stream = dev->streams[stream_id];
+
   if (!hda_stream) {
     ERROR("%d is an invalid stream id\n", stream_id);
     return -1;
   }
+
   if (hda_stream->bdls_length == HDA_MAX_NUM_OF_BDLS) {
     ERROR("BDL ring buffer is full\n");
     return -1;
   }
+
   uint8_t cur_index = (hda_stream->bdls_start_index + hda_stream->bdls_length) %
                       HDA_MAX_NUM_OF_BDLS;
   bdl_t *bdl;
   bdl = malloc(sizeof(bdl_t));
+
   if (!bdl) {
     ERROR("Cannot allocate BDL\n");
     return -1;
   }
+
   DEBUG("BDL address: 0x%016lx\n", bdl);
+
   memset(bdl, 0, sizeof(*bdl));
-  hda_stream->bdls[cur_index] = (uint64_t)bdl;
+  hda_stream->bdls[cur_index] = bdl;
   hda_stream->bdls_length += 1;
 
   // write source data to newly created BDL
@@ -1448,6 +1521,8 @@ static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
     curr_offset += chunksize;
   }
   bdl->buf[index - 1].ioc = 1;
+  hda_stream->bdls_size[cur_index] = index - 1;
+
   return 0;
 }
 

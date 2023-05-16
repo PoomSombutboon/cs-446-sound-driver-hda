@@ -133,6 +133,8 @@ struct nk_sound_dev_int {
   // interface to retrieve parameters of the given stream
   int (*get_stream_params)(void *state, struct nk_sound_dev_stream *stream,
                            struct nk_sound_dev_params *p);
+
+  int (*play_stream)(void *state, struct nk_sound_dev_stream *stream);
 };
 
 struct nk_sound_dev {
@@ -172,5 +174,8 @@ int nk_sound_dev_read_to_stream(
 int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev,
                                    struct nk_sound_dev_stream *stream,
                                    struct nk_sound_dev_params *p);
+
+int nk_sound_dev_play_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream);
 
 #endif

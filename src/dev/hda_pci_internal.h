@@ -397,6 +397,18 @@ typedef union {
   } __attribute__((packed));
 } __attribute__((packed)) sdnctl_t;
 
+// SDNLVI - Stream Descriptor n Last Valid Index
+// Specification: section 3.3.39, page 47
+#define SDNLVI 0x8c
+#define SDNLVI_LEN 0x2
+typedef union {
+  uint16_t val;
+  struct {
+    uint8_t resv: 8;
+    uint8_t lvi: 8;
+  } __attribute__((packed));
+} __attribute__((packed)) sdnlvi_t;
+
 // SDNFMT - Stream Descriptor n Format
 // Specification: section 3.3.41, page 47
 #define SDNFMT 0x92
@@ -473,7 +485,9 @@ struct hda_stream_info {
   struct nk_sound_dev_stream stream;
 
   // store buffer descriptor lists in a ring buffer
-  uint64_t bdls[HDA_MAX_NUM_OF_BDLS];
+  bdl_t *bdls[HDA_MAX_NUM_OF_BDLS];
+  uint8_t bdls_size[HDA_MAX_NUM_OF_BDLS];
+  uint8_t bdls_lvi[HDA_MAX_NUM_OF_BDLS];
   uint8_t bdls_start_index;
   uint8_t bdls_length;
 
@@ -562,6 +576,9 @@ struct hda_pci_dev {
 
   // store available mdoes
   struct list_head available_modes_list;
+
+  // current running stream number
+  uint8_t current_stream;
 };
 
 #endif

@@ -148,8 +148,7 @@ int nk_sound_dev_write_to_stream(
       DEBUG("write sound not possible\n");
       return -1;
     } else {
-      return di->write_to_stream(d->state, stream, src, len, callback,
-                                 state);
+      return di->write_to_stream(d->state, stream, src, len, callback, state);
     }
     break;
   case NK_DEV_REQ_BLOCKING:
@@ -265,4 +264,11 @@ int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev,
 
   DEBUG("set sound parameters of %s\n", d->name);
   return di->get_stream_params(d->state, stream, p);
+}
+
+int nk_sound_dev_play_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream) {
+  struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+  struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+  return di->play_stream(d->state, stream);
 }
