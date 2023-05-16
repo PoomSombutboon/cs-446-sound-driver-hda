@@ -79,7 +79,8 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
 static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
-static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id);
+static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
+                          uint8_t *src, uint64_t len);
 
 static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
@@ -137,13 +138,6 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   }
   DEBUG("Stream parameters configuring completed\n");
 
-  DEBUG("Initiate BDL initialization\n");
-  if (initialize_bdl(dev, stream_id)) {
-    ERROR("BDL initialization failed\n");
-    return NULL;
-  }
-  DEBUG("Completed BDL initialization\n");
-
   return &dev->streams[stream_id]->stream;
 }
 
@@ -190,9 +184,16 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
 
   if (stream_id >= HDA_MAX_NUM_OF_STREAMS || !dev->streams[stream_id]) {
     ERROR("stream id %d is an invalid stream\n");
+    return -1;
   }
 
-  bdl_t *bdl = &(dev->streams[stream_id]->bdl);
+  // initialize BDL
+  DEBUG("Initiate BDL initialization\n");
+  if (initialize_bdl(dev, stream_id, src, len)) {
+    ERROR("BDL initialization failed\n");
+    return NULL;
+  }
+  DEBUG("Completed BDL initialization\n");
 
   // set the length of the buffer
   DEBUG("Configure stream descriptor cyclic buffer length\n");
@@ -200,35 +201,31 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
   hda_pci_write_regl(dev, SDNCBL + stream_id * STREAM_OFFSET_CONST,
                      (uint32_t)len);
 
-  uint16_t index = 0;
-  uint64_t curr_offset = 0;
-  uint64_t chunksize = 0;
-  while (curr_offset < len) {
-    DEBUG("BDLE address: 0x%016lx\n", &(bdl->buf[index]));
-    chunksize = get_chunk_size(curr_offset, len);
-    bdl->buf[index].reserved = 0;
-    bdl->buf[index].address = (((uint64_t)src) + curr_offset);
-    DEBUG("Audio chunck address: 0x%016lx\n", bdl->buf[index].address);
-    bdl->buf[index].length = chunksize;
-    bdl->buf[index].ioc = 0;
-    index++;
-    curr_offset += chunksize;
-  }
-
-  bdl->buf[index - 1].ioc = 1;
-
   // set output path to output converter (DAC) from the current stream
   // descriptor (stream_id)
   set_output_stream(dev, (uint8_t)stream_id);
 
+  // TODO: Handle play current BDL
+  // - If run bit has not been set, we set the run
+  //   we put set the upper and lower BDL to current stream descriptor
+  // - we turn off the run bit, do the reset, pop the current BDL from
+  //   the ring buffer, and use the next BDL (if exist) to set upper and lower
+  //   BDL bit of stream descriptor in the interupt handler when ioc raise an
+  //   interupt.
+  // - To pop, we check
+  //   - we check if the ring buffer is empty, if it is return error - 1
+  //   - else, we set element in bdls_start_index to None, decrement
+  //   bdls_length, and advance the bdls_start_index by
+  //   - bdls_start_index = (bdls_start_index + 1) % HDA_MAX_NUM_OF_BDLS
+
   // set interrupt and start running stream
-  sdnctl_t sd_control;
-  read_sd_control(dev, &sd_control, stream_id);
-  sd_control.stripe = 0;
-  sd_control.ioce = 1;
-  sd_control.run = 1;
-  write_sd_control(dev, &sd_control, stream_id);
-  DEBUG("Start running stream %d\n", stream_id);
+  // sdnctl_t sd_control;
+  // read_sd_control(dev, &sd_control, stream_id);
+  // sd_control.stripe = 0;
+  // sd_control.ioce = 1;
+  // sd_control.run = 1;
+  // write_sd_control(dev, &sd_control, stream_id);
+  // DEBUG("Start running stream %d\n", stream_id);
 
   return 0;
 }
@@ -1274,7 +1271,7 @@ int hda_pci_init(struct naut_info *naut) {
 
   if (discover_devices(naut->sys.pci)) {
     ERROR("Discovery failed\n");
-    return -1;
+    return;
   }
 
   return bringup_devices();
@@ -1411,24 +1408,46 @@ static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
   return 0;
 }
 
-static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id) {
-  bdl_t *bdl = &(dev->streams[stream_id]->bdl);
+static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
+                          uint8_t *src, uint64_t len) {
+  struct hda_stream_info *hda_stream = dev->streams[stream_id];
+  if (!hda_stream) {
+    ERROR("%d is an invalid stream id\n", stream_id);
+    return -1;
+  }
+  if (hda_stream->bdls_length == HDA_MAX_NUM_OF_BDLS) {
+    ERROR("BDL ring buffer is full\n");
+    return -1;
+  }
+  uint8_t cur_index = (hda_stream->bdls_start_index + hda_stream->bdls_length) %
+                      HDA_MAX_NUM_OF_BDLS;
+  bdl_t *bdl;
+  bdl = malloc(sizeof(bdl_t));
+  if (!bdl) {
+    ERROR("Cannot allocate BDL\n");
+    return -1;
+  }
   DEBUG("BDL address: 0x%016lx\n", bdl);
-
   memset(bdl, 0, sizeof(*bdl));
+  hda_stream->bdls[cur_index] = (uint64_t)bdl;
+  hda_stream->bdls_length += 1;
 
-  uint32_t bdl_u = (uint32_t)(((uint64_t)bdl) >> 32);
-  uint32_t bdl_l = ((uint32_t)(((uint64_t)bdl))) & 0xFFFFFF80;
-  uint16_t bdl_upper = SDNBDPU + stream_id * STREAM_OFFSET_CONST;
-  uint16_t bdl_lower = SDNBDPL + stream_id * STREAM_OFFSET_CONST;
-  hda_pci_write_regl(dev, bdl_upper, bdl_u);
-  hda_pci_write_regl(dev, bdl_lower, bdl_l);
-
-  DEBUG("Wrote 0x%08x to BDL upper address\n",
-        hda_pci_read_regl(dev, bdl_upper));
-  DEBUG("Wrote 0x%08x to BDL lower address\n",
-        hda_pci_read_regl(dev, bdl_lower));
-
+  // write source data to newly created BDL
+  uint16_t index = 0;
+  uint64_t curr_offset = 0;
+  uint64_t chunksize = 0;
+  while (curr_offset < len) {
+    DEBUG("BDLE address: 0x%016lx\n", &(bdl->buf[index]));
+    chunksize = get_chunk_size(curr_offset, len);
+    bdl->buf[index].reserved = 0;
+    bdl->buf[index].address = (((uint64_t)src) + curr_offset);
+    DEBUG("Audio chunck address: 0x%016lx\n", bdl->buf[index].address);
+    bdl->buf[index].length = chunksize;
+    bdl->buf[index].ioc = 0;
+    index++;
+    curr_offset += chunksize;
+  }
+  bdl->buf[index - 1].ioc = 1;
   return 0;
 }
 

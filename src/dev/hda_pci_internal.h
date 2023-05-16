@@ -10,6 +10,7 @@
 
 #define HDA_MAX_NUM_OF_STREAMS 30
 #define HDA_MAX_NUM_OF_STREAM_TAGS 16
+#define HDA_MAX_NUM_OF_BDLS 10
 
 // ========== PCI CONFIG SPACE ==========
 
@@ -470,7 +471,11 @@ typedef struct {
 
 struct hda_stream_info {
   struct nk_sound_dev_stream stream;
-  bdl_t bdl;
+
+  // store buffer descriptor lists in a ring buffer
+  uint64_t bdls[HDA_MAX_NUM_OF_BDLS];
+  uint8_t bdls_start_index;
+  uint8_t bdls_length;
 
   // This is one of the 30 possible stream numbers defined in section 3.3.2 of
   // the specification. There is a maximum of 30 possible streams that can be
