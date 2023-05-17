@@ -1814,10 +1814,12 @@ static int handle_write_to_stream(char *buf, void *priv) {
   uint64_t buf_len = sampling_frequency * duration * 4;
   uint8_t *audio_buf;
   audio_buf = (uint8_t *)malloc(buf_len);
-  create_sine_wave(buf, buf_len, frequency, sampling_frequency);
+  create_sine_wave(audio_buf, buf_len, frequency, sampling_frequency);
+
+  DEBUG("Creating audio data at 0x%016lx", audio_buf);
 
   struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
-  hda_write_to_stream(hda_dev, stream, buf, buf_len, 0, 0);
+  hda_write_to_stream(hda_dev, stream, audio_buf, buf_len, 0, 0);
 
   nk_vc_printf("Writing to stream %d: freq %d duration %d\n", stream_id,
                frequency, duration);
