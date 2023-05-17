@@ -440,7 +440,7 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     void *audio_ptr = (void *)(cur_bdl->buf[0].address);
     DEBUG("Freed audio data at 0x%016lx\n", audio_ptr);
     free(audio_ptr);
-    DEBUG("Freed BDL %d at 0x%016lx\n", cur_index, &cur_bdl->buf[0]);
+    DEBUG("Freed BDL %d at 0x%016lx\n", cur_index, cur_bdl);
     free(cur_bdl);
 
     // change freed pointer to NULL
@@ -467,7 +467,7 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
       return 0;
     }
 
-    DEBUG("New BDL address: 0x%016lx\n", *new_bdl);
+    DEBUG("New BDL address: 0x%016lx\n", new_bdl);
 
     // set current stream descriptor's BDL upper and lower address bit with
     // a new BDL address
@@ -1410,11 +1410,12 @@ static int bringup_device(struct hda_pci_dev *dev) {
     uint64_t buf_len = sampling_frequency * duration * 4;
     uint64_t tone_frequency = (j + 1) * (j + 1) * 200;
     uint8_t *buf;
-    for (int k = 1; k < 3; k++) {
+    // should see 2 errors since length of the buffer is 10
+    for (int k = 1; k < 12; k++) {
       buf = (uint8_t *)malloc(buf_len);
       uint64_t cur_tone_frequency = tone_frequency * k;
       DEBUG("Create sin wave at: 0x%016lx\n", buf);
-      create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
+      create_sine_wave(buf, buf_len, cur_tone_frequency, sampling_frequency);
       hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
     }
 
