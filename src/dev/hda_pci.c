@@ -168,7 +168,7 @@ static inline void hda_pci_write_regb(struct hda_pci_dev *dev, uint32_t offset,
 
 struct nk_sound_dev_stream *
 hda_open_stream(void *state, struct nk_sound_dev_params *params) {
-  DEBUG("Opening new stream\n");
+  DEBUG("Opening new data stream\n");
 
   if (!state) {
     ERROR("The device state pointer is null\n");
@@ -182,36 +182,80 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
 
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
 
-  DEBUG("Initiate parameters check\n");
+  DEBUG("INITIATE: check_valid_params()\n");
   if (check_valid_params(dev, params)) {
-    ERROR("Parameters check failed\n");
+    DEBUG("FAILED: check_valid_params()\n");
     return NULL;
   }
-  DEBUG("Parameters check completed\n");
+  DEBUG("COMPLETED: check_valid_params()\n");
 
-  DEBUG("Initiate new stream allocation\n");
+  DEBUG("INITIATE: create_new_stream()\n");
   int new_stream_id = create_new_stream(dev, params);
   if (new_stream_id == -1) {
-    ERROR("New stream allocation failed\n");
+    DEBUG("FAILED: create_new_stream()\n");
     return NULL;
   }
   uint8_t stream_id = (uint8_t)new_stream_id;
-  DEBUG("New stream allocation completed\n");
+  DEBUG("COMPLETED: create_new_stream()\n");
 
-  DEBUG("Initiate stream reset\n");
+  DEBUG("INITIATE: reset_stream()\n");
   if (reset_stream(dev, stream_id)) {
-    ERROR("Stream reset failed\n");
+    DEBUG("FAILED: reset_stream()\n");
     return NULL;
   }
-  DEBUG("Stream reset completed\n");
+  DEBUG("COMPLETED: reset_stream()\n");
 
-  DEBUG("Initiate stream parameters configuring\n");
+  DEBUG("INITIATE: configure_stream()\n");
   if (configure_stream(dev, stream_id)) {
-    ERROR("Stream parameters configuring failed\n");
+    ERROR("FAILED: configure_stream()\n");
     return NULL;
   }
-  DEBUG("Stream parameters configuring completed\n");
+  DEBUG("COMPLETED: configure_stream()\n");
 
+  DEBUG("INITIATE: initialize_bdl()\n");
+
+  uint64_t sampling_frequency = 48000;
+  uint32_t duration = 2;
+  uint64_t tone_frequency = 100;
+  uint64_t buf_len = sampling_frequency * duration * 4;
+  uint8_t *buf = (uint8_t *)malloc(buf_len);
+  create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
+
+  if (initialize_bdl(dev, stream_id, buf, buf_len)) {
+    ERROR("FAILED: initialize_bdl()\n");
+    return NULL;
+  }
+  DEBUG("COMPLETED: initialize_bdl()\n");
+
+  // program the BDL upper and lower address
+  bdl_t *bdl = dev->streams[stream_id]->bdls[0];
+  uint32_t bdl_u = (uint32_t)(((uint64_t)bdl) >> 32);
+  uint32_t bdl_l = ((uint32_t)(((uint64_t)bdl))) & 0xFFFFFF80;
+  uint16_t bdl_upper = SDNBDPU + stream_id * STREAM_OFFSET_CONST;
+  uint16_t bdl_lower = SDNBDPL + stream_id * STREAM_OFFSET_CONST;
+  hda_pci_write_regl(dev, bdl_upper, bdl_u);
+  hda_pci_write_regl(dev, bdl_lower, bdl_l);
+  DEBUG("Wrote 0x%08x to BDL upper address\n",
+        hda_pci_read_regl(dev, bdl_upper));
+  DEBUG("Wrote 0x%08x to BDL lower address\n",
+        hda_pci_read_regl(dev, bdl_lower));
+
+  // program the stream LVI (last valid index) of the BDL
+  sdnlvi_t lvi;
+  uint16_t lvi_offset = SDNLVI + stream_id * STREAM_OFFSET_CONST;
+  lvi.val = hda_pci_read_regw(dev, lvi_offset);
+  lvi.lvi = dev->streams[stream_id]->bdls_lvi[0];
+  hda_pci_write_regw(dev, lvi_offset, lvi.val);
+  lvi.val = hda_pci_read_regw(dev, lvi_offset);
+  DEBUG("Stream %d's LVI: %d, %d\n", stream_id, lvi.val,
+        dev->streams[stream_id]->bdls_lvi[0]);
+
+  // program the length of samples in cyclic buffer
+  uint32_t sdncbl_offset = SDNCBL + stream_id * STREAM_OFFSET_CONST;
+  hda_pci_write_regl(dev, sdncbl_offset, (uint32_t)buf_len);
+  DEBUG("Stream %d's CBL: %d\n", stream_id, buf_len);
+
+  DEBUG("Done opening a new stream %d\n", stream_id);
   return &dev->streams[stream_id]->stream;
 }
 
@@ -322,61 +366,25 @@ int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
   uint8_t stream_id = stream->stream_id;
 
-  // if stream is already running, do nothing
   sdnctl_t sd_control;
+
+  // if other stream is currently running, stop it
+  if (dev->current_stream != 255) {
+    DEBUG("Stopping stream %d\n", dev->current_stream);
+    read_sd_control(dev, &sd_control, dev->current_stream);
+    sd_control.run = 0;
+    write_sd_control(dev, &sd_control, dev->current_stream);
+  }
+
+  // if stream is already running, do nothing
   read_sd_control(dev, &sd_control, stream_id);
   if (sd_control.run) {
+    DEBUG("Stream %d is already running\n", stream_id);
     return 0;
   }
 
-  // if other stream is currently running, stop and reset it
-  if (dev->current_stream != 255) {
-    if (reset_stream(dev, dev->current_stream)) {
-      ERROR("Cannot reset old stream %d", dev->current_stream);
-      return -1;
-    }
-  }
-
-  // reset new stream
-  if (reset_stream(dev, stream_id)) {
-    ERROR("Cannot reset new stream %d", stream_id);
-    return -1;
-  }
-
-  // configure stream
-  if (configure_stream(dev, stream_id)) {
-    ERROR("Stream parameters configuring failed\n");
-    return -1;
-  }
-
-  // set the length of the buffer
-  DEBUG("Configure stream descriptor cyclic buffer length\n");
-  hda_pci_write_regl(dev, SDNCBL + stream_id * STREAM_OFFSET_CONST,
-                     dev->streams[stream_id]->bdls_size[0]);
-
-  // set output path to output converter (DAC) from the current stream
-  // descriptor (stream_id)
-  set_output_stream(dev, (uint8_t)stream_id);
-
-  // set DMA engine to run first BDL in the stream's ring buffer
-  bdl_t *bdl = dev->streams[stream_id]->bdls[0];
-  uint32_t bdl_u = (uint32_t)(((uint64_t)bdl) >> 32);
-  uint32_t bdl_l = ((uint32_t)(((uint64_t)bdl))) & 0xFFFF80;
-  uint16_t bdl_upper = SDNBDPU + stream_id * STREAM_OFFSET_CONST;
-  uint16_t bdl_lower = SDNBDPL + stream_id * STREAM_OFFSET_CONST;
-  hda_pci_write_regl(dev, bdl_upper, bdl_u);
-  hda_pci_write_regl(dev, bdl_lower, bdl_l);
-
-  /* program the stream LVI (last valid index) of the BDL */
-  uint16_t lvi_offset = SDNLVI + stream_id * STREAM_OFFSET_CONST;
-  sdnlvi_t lvi;
-  lvi.val = hda_pci_read_regw(dev, lvi_offset);
-  DEBUG("Last Valid Index Read: 0x%04x\n", lvi);
-  lvi.lvi = dev->streams[stream_id]->bdls_lvi[0];
-  hda_pci_write_regw(dev, lvi_offset, lvi.val);
-
-  lvi.val = hda_pci_read_regw(dev, lvi_offset);
-  DEBUG("LVI Read: 0x%04x\n", lvi.val);
+  // connect output converter (ADC) with the stream's tag
+  set_output_stream(dev, stream_id);
 
   // set interrupt and start running stream
   read_sd_control(dev, &sd_control, stream_id);
@@ -384,8 +392,11 @@ int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
   sd_control.ioce = 1;
   sd_control.run = 1;
   write_sd_control(dev, &sd_control, stream_id);
+  DEBUG("Start running stream %d\n", stream_id);
 
+  // update stream
   dev->current_stream = stream_id;
+
   return 0;
 }
 
@@ -1274,19 +1285,14 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   for (int j = 0; j < 1; j++) {
     struct nk_sound_dev_stream *stream = hda_open_stream(dev, &params);
+
     if (!stream) {
       ERROR("error lol\n");
       return -1;
     }
-    int stream_id = stream->stream_id;
-    uint64_t sampling_frequency = 48000;
-    uint32_t duration = 2;
-    uint64_t tone_frequency = 100;
-    uint64_t buf_len = sampling_frequency * duration * 4;
-    uint8_t *buf = (uint8_t *)malloc(buf_len);
-    DEBUG("Create sin wave at: 0x%016lx\n", buf);
-    create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
-    hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
+
+    // hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
+    hda_play_stream(dev, stream);
   }
 
   struct nk_sound_dev_params available_modes[100];
@@ -1477,51 +1483,68 @@ static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
 
 static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
                           uint8_t *src, uint64_t len) {
+
   struct hda_stream_info *hda_stream = dev->streams[stream_id];
 
+  // if given stream ID is invalid, print error and return
   if (!hda_stream) {
     ERROR("%d is an invalid stream id\n", stream_id);
     return -1;
   }
 
+  // if there is no room in the ring buffer to hold BDL, print error and return
   if (hda_stream->bdls_length == HDA_MAX_NUM_OF_BDLS) {
     ERROR("BDL ring buffer is full\n");
     return -1;
   }
 
-  uint8_t cur_index = (hda_stream->bdls_start_index + hda_stream->bdls_length) %
-                      HDA_MAX_NUM_OF_BDLS;
+  // create new BDL struct to hold the BDL entries (BDLE)
   bdl_t *bdl;
   bdl = malloc(sizeof(bdl_t));
 
+  // if we cannot allocate space for new BDL, print error and return
   if (!bdl) {
     ERROR("Cannot allocate BDL\n");
     return -1;
   }
-
   DEBUG("BDL address: 0x%016lx\n", bdl);
 
+  // set all bytes in BDL to 0
   memset(bdl, 0, sizeof(*bdl));
+
+  // write BDL to next available slot in the ring buffer
+  uint8_t cur_index = (hda_stream->bdls_start_index + hda_stream->bdls_length) %
+                      HDA_MAX_NUM_OF_BDLS;
   hda_stream->bdls[cur_index] = bdl;
   hda_stream->bdls_length += 1;
+
+  DEBUG("Storing BDL to slot %d of the ring buffer\n", cur_index);
 
   // write source data to newly created BDL
   uint16_t index = 0;
   uint64_t curr_offset = 0;
   uint64_t chunksize = 0;
   while (curr_offset < len) {
-    DEBUG("BDLE address: 0x%016lx\n", &(bdl->buf[index]));
     chunksize = get_chunk_size(curr_offset, len);
+
     bdl->buf[index].reserved = 0;
     bdl->buf[index].address = (((uint64_t)src) + curr_offset);
-    DEBUG("Audio chunck address: 0x%016lx\n", bdl->buf[index].address);
     bdl->buf[index].length = chunksize;
     bdl->buf[index].ioc = 0;
+
+    DEBUG("BDLE %d address: 0x%016lx\n", index, &(bdl->buf[index]));
+    DEBUG("Audio chunck address: 0x%016lx\n", bdl->buf[index].address);
+
     index++;
     curr_offset += chunksize;
   }
+
+  // update IOC of the last BDLE to 1 to trigger interrupt on completion
   bdl->buf[index - 1].ioc = 1;
-  hda_stream->bdls_size[cur_index] = index - 1;
+
+  // update size and LVI for this BDL
+  hda_stream->bdls_size[cur_index] = len;
+  hda_stream->bdls_lvi[cur_index] = index - 1;
 
   return 0;
 }

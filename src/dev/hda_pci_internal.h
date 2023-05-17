@@ -404,8 +404,8 @@ typedef union {
 typedef union {
   uint16_t val;
   struct {
-    uint8_t resv: 8;
     uint8_t lvi: 8;
+    uint8_t resv: 8;
   } __attribute__((packed));
 } __attribute__((packed)) sdnlvi_t;
 
@@ -486,7 +486,7 @@ struct hda_stream_info {
 
   // store buffer descriptor lists in a ring buffer
   bdl_t *bdls[HDA_MAX_NUM_OF_BDLS];
-  uint8_t bdls_size[HDA_MAX_NUM_OF_BDLS];
+  uint32_t bdls_size[HDA_MAX_NUM_OF_BDLS];
   uint8_t bdls_lvi[HDA_MAX_NUM_OF_BDLS];
   uint8_t bdls_start_index;
   uint8_t bdls_length;
