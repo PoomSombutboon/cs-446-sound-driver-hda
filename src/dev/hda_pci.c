@@ -41,11 +41,6 @@
 
 // ========== FUNCTIONS TO IMPLEMENT ==========
 
-static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
-  DEBUG("**** INSIDE HANDLER ****\n");
-  return 0;
-}
-
 int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
   return -1;
 }
@@ -59,6 +54,8 @@ int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
 }
 
 // ========== FORWARD DECLRATION FOR INTERFACE HELPERS ==========
+static inline uint8_t hda_pci_read_regb(struct hda_pci_dev *dev,
+                                        uint32_t offset);
 
 static inline void hda_pci_write_regl(struct hda_pci_dev *dev, uint32_t offset,
                                       uint32_t data);
@@ -396,6 +393,110 @@ int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
 
   // update stream
   dev->current_stream = stream_id;
+
+  return 0;
+}
+
+static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
+  DEBUG("**** INSIDE HANDLER ****\n");
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)priv_data;
+  uint8_t cur_stream_id = dev->current_stream;
+  struct hda_stream_info *hda_stream = dev->streams[cur_stream_id];
+  if (!hda_stream) {
+    ERROR("INVALID: stream id %d\n", cur_stream_id);
+    return -1;
+  }
+
+  sd0sts_t stream_status;
+  stream_status.val =
+      hda_pci_read_regb(dev, SD0STS + cur_stream_id * STREAM_OFFSET_CONST);
+
+  // check if interupt on completion (IOC) is triggered and the current stream
+  // is an output stream
+  if (hda_stream->stream.params.type == NK_SOUND_DEV_OUTPUT_STREAM &&
+      stream_status.bcis) {
+    uint8_t cur_index = hda_stream->bdls_start_index;
+    DEBUG("IOC triggered: Buffer %d is completed\n", cur_index);
+   
+    // free current BDL and the memory that store the audio data
+    bdl_t **cur_bdl = &(hda_stream->bdls[cur_index]);
+    void *audio_ptr = (void *)(*cur_bdl)->buf[0].address;
+    DEBUG("Freed audio data at 0x%016lx\n", audio_ptr);
+    free(audio_ptr);
+    DEBUG("Freed BDL %d at 0x%016lx\n", cur_index, *cur_bdl);
+    free(*cur_bdl);
+
+    // free the space in the ring buffer
+    hda_stream->bdls[cur_index] = NULL;
+
+    sdnctl_t sd_control;
+    // ====== TRIED RESET ====
+    // DEBUG("RESET!\n");
+    // reset_stream(dev, cur_stream_id);
+    // =======================
+    DEBUG("Stop running stream %d\n", cur_stream_id);
+    read_sd_control(dev, &sd_control, cur_stream_id);
+    sd_control.run = 0;
+    write_sd_control(dev, &sd_control, cur_stream_id);
+    
+    DEBUG("BDLs length: %d\n", hda_stream->bdls_length);
+    hda_stream->bdls_length -= 1;
+    hda_stream->bdls_start_index =
+        (hda_stream->bdls_start_index + 1) % HDA_MAX_NUM_OF_BDLS;
+
+    // get the new (next) BDL in the ring buffer
+    uint8_t new_index = hda_stream->bdls_start_index;
+    bdl_t **new_bdl = &(hda_stream->bdls[new_index]);
+
+    // check if there is any BDL left in the ring buffer
+    if (!*new_bdl || hda_stream->bdls_length == 0) {
+      DEBUG("Nothing else to play; BDLS length is %d\n",
+            hda_stream->bdls_length);
+      return 0;
+    }
+
+    DEBUG("New BDL address: 0x%016lx\n", *new_bdl);
+    
+    // set current stream descriptor's BDL upper and lower address bit with
+    // a new BDL address
+    uint32_t bdl_u = (uint32_t)(((uint64_t)*new_bdl) >> 32);
+    uint32_t bdl_l = ((uint32_t)(((uint64_t)*new_bdl))) & 0xFFFFFF80;
+    uint16_t bdl_upper = SDNBDPU + cur_stream_id * STREAM_OFFSET_CONST;
+    uint16_t bdl_lower = SDNBDPL + cur_stream_id * STREAM_OFFSET_CONST;
+    hda_pci_write_regl(dev, bdl_upper, bdl_u);
+    hda_pci_write_regl(dev, bdl_lower, bdl_l);
+    DEBUG("Wrote 0x%08x to BDL upper address\n",
+          hda_pci_read_regl(dev, bdl_upper));
+    DEBUG("Wrote 0x%08x to BDL lower address\n",
+          hda_pci_read_regl(dev, bdl_lower));
+
+    // program the stream LVI (last valid index) of the new BDL
+    sdnlvi_t lvi;
+    uint16_t lvi_offset = SDNLVI + cur_stream_id * STREAM_OFFSET_CONST;
+    lvi.val = hda_pci_read_regw(dev, lvi_offset);
+    lvi.lvi = dev->streams[cur_stream_id]->bdls_lvi[new_index];
+    hda_pci_write_regw(dev, lvi_offset, lvi.val);
+    lvi.val = hda_pci_read_regw(dev, lvi_offset);
+    DEBUG("Stream %d's new LVI: %d, %d\n", cur_stream_id, lvi.val,
+          dev->streams[cur_stream_id]->bdls_lvi[new_index]);
+
+    // program the length of samples in the new cyclic buffer
+    uint32_t sdncbl_offset = SDNCBL + cur_stream_id * STREAM_OFFSET_CONST;
+    hda_pci_write_regl(dev, sdncbl_offset,
+                       dev->streams[cur_stream_id]->bdls_size[new_index]);
+    DEBUG("Stream %d's new CBL: %d\n", cur_stream_id,
+          dev->streams[cur_stream_id]->bdls_size[new_index]);
+
+    // start stream
+    DEBUG("Start running stream %d\n", cur_stream_id);
+    read_sd_control(dev, &sd_control, cur_stream_id);
+    // ===== TRIED SETTING STRIPE & IOCE AGAIN ========
+    // sd_control.stripe = 0;
+    // sd_control.ioce = 1;
+    // ================================================
+    sd_control.run = 1;
+    write_sd_control(dev, &sd_control, cur_stream_id);
+  }
 
   return 0;
 }
@@ -1291,7 +1392,19 @@ static int bringup_device(struct hda_pci_dev *dev) {
       return -1;
     }
 
-    // hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
+    uint64_t sampling_frequency = 48000;
+    uint32_t duration = 2;
+    uint64_t buf_len = sampling_frequency * duration * 4;
+    uint64_t tone_frequency = 200;
+    uint8_t *buf;
+    for (int k = 1; k < 3; k++) {
+      buf = (uint8_t *)malloc(buf_len);
+      uint64_t cur_tone_frequency = tone_frequency * k;
+      DEBUG("Create sin wave at: 0x%016lx\n", buf);
+      create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
+      hda_write_to_stream(dev, stream, buf, buf_len, 0, 0);
+    }
+
     hda_play_stream(dev, stream);
   }
 
@@ -1517,7 +1630,6 @@ static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
                       HDA_MAX_NUM_OF_BDLS;
   hda_stream->bdls[cur_index] = bdl;
   hda_stream->bdls_length += 1;
-
   DEBUG("Storing BDL to slot %d of the ring buffer\n", cur_index);
 
   // write source data to newly created BDL

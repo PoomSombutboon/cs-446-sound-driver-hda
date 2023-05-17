@@ -404,8 +404,8 @@ typedef union {
 typedef union {
   uint16_t val;
   struct {
-    uint8_t lvi: 8;
-    uint8_t resv: 8;
+    uint8_t lvi : 8;
+    uint8_t resv : 8;
   } __attribute__((packed));
 } __attribute__((packed)) sdnlvi_t;
 
@@ -455,6 +455,22 @@ const uint8_t HDA_SAMPLE_RATES[][3] = {
     {BASE_44kHz1, MULT_BY_4, DIV_BY_1}, // 176.4 kHz
     {BASE_48kHz, MULT_BY_4, DIV_BY_1},  // 192.0 kHz
 };
+
+// SD0STS - Stream Descriptor n Status
+// Specification: section
+#define SD0STS 0x83
+#define SD0STS_LEN 0x1
+typedef union {
+  uint8_t val;
+  struct {
+    uint8_t resv2 : 2;
+    uint8_t bcis : 1;
+    uint8_t fifoe : 1;
+    uint8_t dese : 1;
+    uint8_t fifordy : 1;
+    uint8_t resv1 : 2;
+  } __attribute__((packed));
+} __attribute__((packed)) sd0sts_t;
 
 // SDNBDPL - Stream Descriptor n Lower Base Address
 // Specification: section 3.3.42, page 49
