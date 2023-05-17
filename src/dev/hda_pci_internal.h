@@ -458,8 +458,8 @@ const uint8_t HDA_SAMPLE_RATES[][3] = {
 
 // SD0STS - Stream Descriptor n Status
 // Specification: section
-#define SD0STS 0x83
-#define SD0STS_LEN 0x1
+#define SDNSTS 0x83
+#define SDNSTS_LEN 0x1
 typedef union {
   uint8_t val;
   struct {
@@ -470,7 +470,7 @@ typedef union {
     uint8_t fifordy : 1;
     uint8_t resv1 : 2;
   } __attribute__((packed));
-} __attribute__((packed)) sd0sts_t;
+} __attribute__((packed)) sdnsts_t;
 
 // SDNBDPL - Stream Descriptor n Lower Base Address
 // Specification: section 3.3.42, page 49

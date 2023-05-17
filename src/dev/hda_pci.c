@@ -399,68 +399,80 @@ int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
 
 static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
   DEBUG("**** INSIDE HANDLER ****\n");
+
   struct hda_pci_dev *dev = (struct hda_pci_dev *)priv_data;
+
   uint8_t cur_stream_id = dev->current_stream;
   struct hda_stream_info *hda_stream = dev->streams[cur_stream_id];
+
   if (!hda_stream) {
     ERROR("INVALID: stream id %d\n", cur_stream_id);
     return -1;
   }
 
-  sd0sts_t stream_status;
+  sdnsts_t stream_status;
   stream_status.val =
-      hda_pci_read_regb(dev, SD0STS + cur_stream_id * STREAM_OFFSET_CONST);
+      hda_pci_read_regb(dev, SDNSTS + cur_stream_id * STREAM_OFFSET_CONST);
 
   // check if interupt on completion (IOC) is triggered and the current stream
   // is an output stream
   if (hda_stream->stream.params.type == NK_SOUND_DEV_OUTPUT_STREAM &&
       stream_status.bcis) {
+    stream_status.bcis = 1;
+    hda_pci_write_regb(dev, SDNSTS + cur_stream_id * STREAM_OFFSET_CONST,
+                       stream_status.val);
+    stream_status.val =
+        hda_pci_read_regb(dev, SDNSTS + cur_stream_id * STREAM_OFFSET_CONST);
+    DEBUG("Reset BDCIS bit for stream %d status: %d\n", cur_stream_id,
+          stream_status.bcis);
+
     uint8_t cur_index = hda_stream->bdls_start_index;
     DEBUG("IOC triggered: Buffer %d is completed\n", cur_index);
-   
+
     sdnctl_t sd_control;
-    // ====== TRIED RESET ====
-    // DEBUG("RESET!\n");
-    // reset_stream(dev, cur_stream_id);
-    // =======================
     DEBUG("Stop running stream %d\n", cur_stream_id);
     read_sd_control(dev, &sd_control, cur_stream_id);
     sd_control.run = 0;
     write_sd_control(dev, &sd_control, cur_stream_id);
-    
+
     // free current BDL and the memory that store the audio data
-    bdl_t **cur_bdl = &(hda_stream->bdls[cur_index]);
-    void *audio_ptr = (void *)(*cur_bdl)->buf[0].address;
+    bdl_t *cur_bdl = hda_stream->bdls[cur_index];
+    void *audio_ptr = (void *)(cur_bdl->buf[0].address);
     DEBUG("Freed audio data at 0x%016lx\n", audio_ptr);
     free(audio_ptr);
-    DEBUG("Freed BDL %d at 0x%016lx\n", cur_index, *cur_bdl);
-    free(*cur_bdl);
+    DEBUG("Freed BDL %d at 0x%016lx\n", cur_index, &cur_bdl->buf[0]);
+    free(cur_bdl);
 
-    // free the space in the ring buffer
+    // change freed pointer to NULL
     hda_stream->bdls[cur_index] = NULL;
-    
-    DEBUG("BDLs length: %d\n", hda_stream->bdls_length);
+
+    DEBUG("OLD BDLs Ring Buffer: length %d, index %d\n",
+          hda_stream->bdls_length, hda_stream->bdls_start_index);
     hda_stream->bdls_length -= 1;
     hda_stream->bdls_start_index =
         (hda_stream->bdls_start_index + 1) % HDA_MAX_NUM_OF_BDLS;
+    DEBUG("NEW BDLs Ring Buffer: length %d, index %d\n",
+          hda_stream->bdls_length, hda_stream->bdls_start_index);
 
     // get the new (next) BDL in the ring buffer
     uint8_t new_index = hda_stream->bdls_start_index;
-    bdl_t **new_bdl = &(hda_stream->bdls[new_index]);
+    bdl_t *new_bdl = hda_stream->bdls[new_index];
 
+    // TODO: Fix this, do not set run to 0. Rather, insert a "quiet sound" to be
+    // played
     // check if there is any BDL left in the ring buffer
-    if (!*new_bdl || hda_stream->bdls_length == 0) {
+    if (!new_bdl || hda_stream->bdls_length == 0) {
       DEBUG("Nothing else to play; BDLS length is %d\n",
             hda_stream->bdls_length);
       return 0;
     }
 
     DEBUG("New BDL address: 0x%016lx\n", *new_bdl);
-    
+
     // set current stream descriptor's BDL upper and lower address bit with
     // a new BDL address
-    uint32_t bdl_u = (uint32_t)(((uint64_t)*new_bdl) >> 32);
-    uint32_t bdl_l = ((uint32_t)(((uint64_t)*new_bdl))) & 0xFFFFFF80;
+    uint32_t bdl_u = (uint32_t)(((uint64_t)new_bdl) >> 32);
+    uint32_t bdl_l = ((uint32_t)(((uint64_t)new_bdl))) & 0xFFFFFF80;
     uint16_t bdl_upper = SDNBDPU + cur_stream_id * STREAM_OFFSET_CONST;
     uint16_t bdl_lower = SDNBDPL + cur_stream_id * STREAM_OFFSET_CONST;
     hda_pci_write_regl(dev, bdl_upper, bdl_u);
@@ -498,6 +510,7 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     write_sd_control(dev, &sd_control, cur_stream_id);
   }
 
+  IRQ_HANDLER_END();
   return 0;
 }
 
@@ -1395,7 +1408,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
     uint64_t sampling_frequency = 48000;
     uint32_t duration = 2;
     uint64_t buf_len = sampling_frequency * duration * 4;
-    uint64_t tone_frequency = 200;
+    uint64_t tone_frequency = (j + 1) * (j + 1) * 200;
     uint8_t *buf;
     for (int k = 1; k < 3; k++) {
       buf = (uint8_t *)malloc(buf_len);
