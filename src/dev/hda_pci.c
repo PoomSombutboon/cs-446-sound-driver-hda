@@ -34,6 +34,7 @@
 #include <nautilus/mm.h>
 #include <nautilus/nautilus.h>
 #include <nautilus/printk.h>
+#include <nautilus/shell.h>
 #include <nautilus/sounddev.h>
 #include <nautilus/spinlock.h>
 
@@ -515,6 +516,9 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
 }
 
 // ========== GLOBAL FIELDS ==========
+
+// used for playing handlers from command line
+struct hda_pci_dev *hda_dev;
 
 // for protection of global state in the driver
 static spinlock_t global_lock;
@@ -1389,6 +1393,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
   // ========== TEST CODE, REMOVE AFTER ==========
 
+  /*
   struct nk_sound_dev_params params;
 
   params.type = NK_SOUND_DEV_OUTPUT_STREAM;
@@ -1397,7 +1402,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
   params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
   params.num_of_channels = 2;
 
-  for (int j = 0; j < 1; j++) {
+  for (int j = 0; j < 2; j++) {
     struct nk_sound_dev_stream *stream = hda_open_stream(dev, &params);
 
     if (!stream) {
@@ -1411,7 +1416,7 @@ static int bringup_device(struct hda_pci_dev *dev) {
     uint64_t tone_frequency = (j + 1) * (j + 1) * 200;
     uint8_t *buf;
     // should see 2 errors since length of the buffer is 10
-    for (int k = 1; k < 12; k++) {
+    for (int k = 1; k < 3; k++) {
       buf = (uint8_t *)malloc(buf_len);
       uint64_t cur_tone_frequency = tone_frequency * k;
       DEBUG("Create sin wave at: 0x%016lx\n", buf);
@@ -1421,11 +1426,12 @@ static int bringup_device(struct hda_pci_dev *dev) {
 
     hda_play_stream(dev, stream);
   }
-
-  struct nk_sound_dev_params available_modes[100];
-  hda_get_avaiable_modes(dev, available_modes, 100);
+  */
 
   // =============================================
+
+  // used for shell handlers
+  hda_dev = dev;
 
   return 0;
 }
@@ -1782,6 +1788,8 @@ static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size) {
   }
 }
 
+// ========== COMMAND LINE FUNCTIONS FOR TESTING ==========
+
 // Assumes 8-bit audio with 2 channels
 static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
                              uint64_t tone_frequency,
@@ -1797,3 +1805,70 @@ static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
     buffer[i + 3] = (uint8_t)(sin_val * 127.0);
   }
 }
+
+static int handle_write_to_stream(char *buf, void *priv) {
+  uint64_t stream_id, frequency, duration;
+  sscanf(buf, "write-stream %d %d %d", &stream_id, &frequency, &duration);
+
+  uint64_t sampling_frequency = 48000;
+  uint64_t buf_len = sampling_frequency * duration * 4;
+  uint8_t *audio_buf;
+  audio_buf = (uint8_t *)malloc(buf_len);
+  create_sine_wave(buf, buf_len, frequency, sampling_frequency);
+
+  struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
+  hda_write_to_stream(hda_dev, stream, buf, buf_len, 0, 0);
+
+  nk_vc_printf("Writing to stream %d: freq %d duration %d\n", stream_id,
+               frequency, duration);
+
+  return 0;
+}
+
+static struct shell_cmd_impl write_stream_impl = {
+    .cmd = "write-stream",
+    .help_str = "write-stream stream_id frequency duration",
+    .handler = handle_write_to_stream,
+};
+nk_register_shell_cmd(write_stream_impl);
+
+static int handle_play_stream(char *buf, void *priv) {
+  uint64_t stream_id;
+  sscanf(buf, "play-stream %d", &stream_id);
+
+  struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
+  hda_play_stream(hda_dev, stream);
+
+  nk_vc_printf("Playing stream %d\n", stream_id);
+
+  return 0;
+}
+
+static struct shell_cmd_impl play_stream_impl = {
+    .cmd = "play-stream",
+    .help_str = "play-stream stream_id",
+    .handler = handle_play_stream,
+};
+nk_register_shell_cmd(play_stream_impl);
+
+static int handle_open_stream(char *buf, void *priv) {
+  struct nk_sound_dev_params params;
+  params.type = NK_SOUND_DEV_OUTPUT_STREAM;
+  params.scale = NK_SOUND_DEV_SCALE_LINEAR;
+  params.sample_rate = NK_SOUND_DEV_SAMPLE_RATE_48kHZ;
+  params.sample_resolution = NK_SOUND_DEV_SAMPLE_RESOLUTION_16;
+  params.num_of_channels = 2;
+
+  struct nk_sound_dev_stream *stream = hda_open_stream(hda_dev, &params);
+
+  nk_vc_printf("Opening stream %d\n", (uint64_t)stream->stream_id);
+
+  return 0;
+}
+
+static struct shell_cmd_impl open_stream_impl = {
+    .cmd = "open-stream",
+    .help_str = "open-stream",
+    .handler = handle_open_stream,
+};
+nk_register_shell_cmd(open_stream_impl);
