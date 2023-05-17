@@ -418,6 +418,16 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     uint8_t cur_index = hda_stream->bdls_start_index;
     DEBUG("IOC triggered: Buffer %d is completed\n", cur_index);
    
+    sdnctl_t sd_control;
+    // ====== TRIED RESET ====
+    // DEBUG("RESET!\n");
+    // reset_stream(dev, cur_stream_id);
+    // =======================
+    DEBUG("Stop running stream %d\n", cur_stream_id);
+    read_sd_control(dev, &sd_control, cur_stream_id);
+    sd_control.run = 0;
+    write_sd_control(dev, &sd_control, cur_stream_id);
+    
     // free current BDL and the memory that store the audio data
     bdl_t **cur_bdl = &(hda_stream->bdls[cur_index]);
     void *audio_ptr = (void *)(*cur_bdl)->buf[0].address;
@@ -428,16 +438,6 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
 
     // free the space in the ring buffer
     hda_stream->bdls[cur_index] = NULL;
-
-    sdnctl_t sd_control;
-    // ====== TRIED RESET ====
-    // DEBUG("RESET!\n");
-    // reset_stream(dev, cur_stream_id);
-    // =======================
-    DEBUG("Stop running stream %d\n", cur_stream_id);
-    read_sd_control(dev, &sd_control, cur_stream_id);
-    sd_control.run = 0;
-    write_sd_control(dev, &sd_control, cur_stream_id);
     
     DEBUG("BDLs length: %d\n", hda_stream->bdls_length);
     hda_stream->bdls_length -= 1;
