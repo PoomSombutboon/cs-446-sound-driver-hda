@@ -134,7 +134,9 @@ struct nk_sound_dev_int {
   int (*get_stream_params)(void *state, struct nk_sound_dev_stream *stream,
                            struct nk_sound_dev_params *p);
 
+  // interface to play/stop stream
   int (*play_stream)(void *state, struct nk_sound_dev_stream *stream);
+  int (*stop_stream)(void *state, struct nk_sound_dev_stream *stream);
 };
 
 struct nk_sound_dev {
@@ -176,6 +178,9 @@ int nk_sound_dev_get_stream_params(struct nk_sound_dev *dev,
                                    struct nk_sound_dev_params *p);
 
 int nk_sound_dev_play_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream);
+
+int nk_sound_dev_stop_stream(struct nk_sound_dev *dev,
                              struct nk_sound_dev_stream *stream);
 
 #endif

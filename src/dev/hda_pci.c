@@ -393,6 +393,40 @@ int hda_play_stream(void *state, struct nk_sound_dev_stream *stream) {
   return 0;
 }
 
+int hda_stop_stream(void *state, struct nk_sound_dev_stream *stream) {
+  DEBUG("Stopping stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!stream) {
+    ERROR("The stream pointer is null\n");
+    return -1;
+  }
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+  uint8_t stream_id = stream->stream_id;
+
+  if (stream_id != dev->current_stream) {
+    DEBUG("Not currently running stream %d; do nothing\n", stream_id);
+    return 0;
+  }
+
+  DEBUG("Stopping stream %d", stream_id);
+
+  sdnctl_t sd_control;
+  read_sd_control(dev, &sd_control, stream_id);
+  sd_control.run = 0;
+  write_sd_control(dev, &sd_control, stream_id);
+
+  // update stream
+  dev->current_stream = 255;
+
+  return 0;
+}
+
 static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
   DEBUG("**** INSIDE HANDLER ****\n");
 
@@ -1949,3 +1983,22 @@ static struct shell_cmd_impl open_stream_impl = {
     .handler = handle_open_stream,
 };
 nk_register_shell_cmd(open_stream_impl);
+
+static int handle_stop_stream(char *buf, void *priv) {
+  uint64_t stream_id;
+  sscanf(buf, "stop-stream %d", &stream_id);
+
+  struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
+  hda_stop_stream(hda_dev, stream);
+
+  nk_vc_printf("Stopping stream %d\n", stream_id);
+
+  return 0;
+}
+
+static struct shell_cmd_impl stop_stream_impl = {
+    .cmd = "stop-stream",
+    .help_str = "stop-stream stream_id",
+    .handler = handle_stop_stream,
+};
+nk_register_shell_cmd(stop_stream_impl);

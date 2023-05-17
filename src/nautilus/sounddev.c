@@ -272,3 +272,10 @@ int nk_sound_dev_play_stream(struct nk_sound_dev *dev,
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
   return di->play_stream(d->state, stream);
 }
+
+int nk_sound_dev_stop_stream(struct nk_sound_dev *dev,
+                             struct nk_sound_dev_stream *stream) {
+  struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
+  struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
+  return di->stop_stream(d->state, stream);
+}
