@@ -88,6 +88,8 @@ static void create_sine_wave(uint8_t *buffer, uint64_t buffer_len,
                              uint64_t tone_frequency,
                              uint64_t sampling_frequency);
 
+static struct audio_data create_empty_audio(struct nk_sound_dev_params *params);
+
 // ========== READ AND WRITE REGISTERS ==========
 
 static inline uint32_t hda_pci_read_regl(struct hda_pci_dev *dev,
@@ -211,15 +213,8 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   DEBUG("COMPLETED: configure_stream()\n");
 
   DEBUG("INITIATE: initialize_bdl()\n");
-
-  uint64_t sampling_frequency = 48000;
-  uint32_t duration = 2;
-  uint64_t tone_frequency = 100;
-  uint64_t buf_len = sampling_frequency * duration * 4;
-  uint8_t *buf = (uint8_t *)malloc(buf_len);
-  create_sine_wave(buf, buf_len, tone_frequency, sampling_frequency);
-
-  if (initialize_bdl(dev, stream_id, buf, buf_len)) {
+  struct audio_data audio = create_empty_audio(params);
+  if (initialize_bdl(dev, stream_id, audio.buffer, audio.size)) {
     ERROR("FAILED: initialize_bdl()\n");
     return NULL;
   }
@@ -250,8 +245,8 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
 
   // program the length of samples in cyclic buffer
   uint32_t sdncbl_offset = SDNCBL + stream_id * STREAM_OFFSET_CONST;
-  hda_pci_write_regl(dev, sdncbl_offset, (uint32_t)buf_len);
-  DEBUG("Stream %d's CBL: %d\n", stream_id, buf_len);
+  hda_pci_write_regl(dev, sdncbl_offset, (uint32_t)audio.size);
+  DEBUG("Stream %d's CBL: %d\n", stream_id, audio.size);
 
   DEBUG("Done opening a new stream %d\n", stream_id);
   return &dev->streams[stream_id]->stream;
@@ -447,6 +442,19 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     // change freed pointer to NULL
     hda_stream->bdls[cur_index] = NULL;
 
+    // check if current BDL is the last one in the ring buffer; if there
+    // it is, create a new empty stream and insert it into the ring buffer
+    if (hda_stream->bdls_length == 1) {
+      DEBUG("Current BDL is the last one in the ring buffer, create a new "
+            "empty BDL\n");
+      struct audio_data audio = create_empty_audio(&hda_stream->stream.params);
+      if (initialize_bdl(dev, cur_stream_id, audio.buffer, audio.size)) {
+        ERROR("Failed to create new empty BDL\n");
+        return -1;
+      }
+      DEBUG("Wrote new empty BDL to the ring buffer\n");
+    }
+
     DEBUG("OLD BDLs Ring Buffer: length %d, index %d\n",
           hda_stream->bdls_length, hda_stream->bdls_start_index);
     hda_stream->bdls_length -= 1;
@@ -458,15 +466,6 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     // get the new (next) BDL in the ring buffer
     uint8_t new_index = hda_stream->bdls_start_index;
     bdl_t *new_bdl = hda_stream->bdls[new_index];
-
-    // TODO: Fix this, do not set run to 0. Rather, insert a "quiet sound" to be
-    // played
-    // check if there is any BDL left in the ring buffer
-    if (!new_bdl || hda_stream->bdls_length == 0) {
-      DEBUG("Nothing else to play; BDLS length is %d\n",
-            hda_stream->bdls_length);
-      return 0;
-    }
 
     DEBUG("New BDL address: 0x%016lx\n", new_bdl);
 
@@ -1788,6 +1787,82 @@ static uint64_t get_chunk_size(uint64_t current_offset, uint64_t total_size) {
   }
 }
 
+static struct audio_data
+create_empty_audio(struct nk_sound_dev_params *params) {
+  struct audio_data audio;
+
+  // sample rate/frequency
+  uint64_t sampling_frequency;
+  switch (params->sample_rate) {
+  case NK_SOUND_DEV_SAMPLE_RATE_8kHZ:
+    sampling_frequency = 8000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_11kHZ025:
+    sampling_frequency = 11025;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_16kHZ:
+    sampling_frequency = 16000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_22kHZ05:
+    sampling_frequency = 22050;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_32kHZ:
+    sampling_frequency = 32000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_44kHZ1:
+    sampling_frequency = 44100;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_48kHZ:
+    sampling_frequency = 48000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_88kHZ2:
+    sampling_frequency = 88200;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_96kHZ:
+    sampling_frequency = 96000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_176kHZ4:
+    sampling_frequency = 176400;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_192kHZ:
+    sampling_frequency = 192000;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RATE_384kHZ:
+    sampling_frequency = 384000;
+    break;
+  default:
+    ERROR("Invalid sample rate\n");
+    return audio;
+  }
+
+  // sample resolution
+  uint64_t sample_size;
+  switch (params->sample_resolution) {
+  case NK_SOUND_DEV_SAMPLE_RESOLUTION_8:
+    sample_size = 1;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RESOLUTION_16:
+    sample_size = 2;
+    break;
+  case NK_SOUND_DEV_SAMPLE_RESOLUTION_20:
+  case NK_SOUND_DEV_SAMPLE_RESOLUTION_24:
+  case NK_SOUND_DEV_SAMPLE_RESOLUTION_32:
+    sample_size = 4;
+    break;
+  default:
+    ERROR("Invalid sample resolution\n");
+    return audio;
+  }
+
+  // buffer - set to duration of 0.5 seconds
+  audio.size =
+      (uint64_t)params->num_of_channels * sample_size * sampling_frequency / 2;
+  audio.buffer = (uint8_t *)malloc(audio.size);
+  memset(audio.buffer, 0, sizeof(audio.size));
+
+  return audio;
+}
+
 // ========== COMMAND LINE FUNCTIONS FOR TESTING ==========
 
 // Assumes 8-bit audio with 2 channels
@@ -1816,7 +1891,7 @@ static int handle_write_to_stream(char *buf, void *priv) {
   audio_buf = (uint8_t *)malloc(buf_len);
   create_sine_wave(audio_buf, buf_len, frequency, sampling_frequency);
 
-  DEBUG("Creating audio data at 0x%016lx", audio_buf);
+  DEBUG("Creating audio data at 0x%016lx\n", audio_buf);
 
   struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
   hda_write_to_stream(hda_dev, stream, audio_buf, buf_len, 0, 0);

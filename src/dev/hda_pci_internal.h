@@ -481,6 +481,7 @@ typedef union {
 #define SDNBDPU 0x9c
 
 // ========== STREAM MANAGEMENT OBJECTS ==========
+
 // BDLE - Buffer Descriptor List Entry
 // Specification: 3.6.3, page 55
 typedef struct {
@@ -595,6 +596,13 @@ struct hda_pci_dev {
 
   // current running stream number
   uint8_t current_stream;
+};
+
+// ========== AUDIO DATA ==========
+
+struct audio_data {
+  uint8_t *buffer;
+  uint64_t size;
 };
 
 #endif
