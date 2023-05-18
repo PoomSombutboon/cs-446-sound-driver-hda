@@ -263,7 +263,7 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
 
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
   uint8_t stream_id = stream->stream_id;
- 
+
   // stop running the stream if it has not been stopped
   sdnctl_t sd_control;
   read_sd_control(dev, &sd_control, stream_id);
@@ -272,9 +272,9 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
     sd_control.run = 0;
     write_sd_control(dev, &sd_control, stream_id);
   }
-  
-  // change to be freed pointer to NULL for both input/output_stream_tags and streams
-  // field
+
+  // change to be freed pointer to NULL for both input/output_stream_tags and
+  // streams field
   struct hda_stream_info *hda_stream = dev->streams[stream_id];
   uint8_t stream_tag = hda_stream->stream_tag;
   if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
@@ -283,10 +283,15 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
     dev->output_stream_tags[stream_tag] = NULL;
   }
   dev->streams[stream_id] = NULL;
-  DEBUG("Stream id %d and stream tag %d becomes avaliable\n", stream_id, stream_tag);
+  DEBUG("Stream id %d and stream tag %d becomes avaliable\n", stream_id,
+        stream_tag);
 
-  // set current_stream to 255 (or -1) to indicate that no stream is currently running
-  dev->current_stream = 255;
+  // if the current_stream is the one as the strem that is being closed, set
+  // current_stream to 255 (or -1) to indicate that no stream is currently
+  // played
+  if (stream_id == dev->current_stream) {
+    dev->current_stream = 255;
+  }
 
   // free stream
   free(hda_stream);
