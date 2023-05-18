@@ -273,9 +273,21 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
     write_sd_control(dev, &sd_control, stream_id);
   }
 
+  struct hda_stream_info *hda_stream = dev->streams[stream_id];
+
+  // free all BDLs
+  for (uint8_t i = hda_stream->bdls_start_index; i < hda_stream->bdls_length;
+       i++) {
+    bdl_t *cur_bdl = hda_stream->bdls[i];
+    void *audio_ptr = (void *)(cur_bdl->buf[0].address);
+    DEBUG("Freed audio data at 0x%016lx\n", audio_ptr);
+    free(audio_ptr);
+    DEBUG("Freed BDL %d at 0x%016lx\n", i, cur_bdl);
+    free(cur_bdl);
+  }
+
   // change to be freed pointer to NULL for both input/output_stream_tags and
   // streams field
-  struct hda_stream_info *hda_stream = dev->streams[stream_id];
   uint8_t stream_tag = hda_stream->stream_tag;
   if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
     dev->input_stream_tags[stream_tag] = NULL;
