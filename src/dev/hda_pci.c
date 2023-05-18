@@ -42,10 +42,6 @@
 
 // ========== FUNCTIONS TO IMPLEMENT ==========
 
-int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
-  return -1;
-}
-
 int hda_read_from_stream(void *state, struct nk_sound_dev_stream *stream,
                          uint8_t *dst, uint64_t len,
                          void (*callback)(nk_sound_dev_status_t status,
@@ -252,6 +248,53 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
   return &dev->streams[stream_id]->stream;
 }
 
+int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
+  DEBUG("Closing stream\n");
+
+  if (!state) {
+    ERROR("The device state pointer is null\n");
+    return -1;
+  }
+
+  if (!stream) {
+    ERROR("The stream pointer is null\n");
+    return -1;
+  }
+
+  struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
+  uint8_t stream_id = stream->stream_id;
+ 
+  // stop running the stream if it has not been stopped
+  sdnctl_t sd_control;
+  read_sd_control(dev, &sd_control, stream_id);
+  if (sd_control.run) {
+    DEBUG("Stop running stream %d\n", stream_id);
+    sd_control.run = 0;
+    write_sd_control(dev, &sd_control, stream_id);
+  }
+  
+  // change to be freed pointer to NULL for both input/output_stream_tags and streams
+  // field
+  struct hda_stream_info *hda_stream = dev->streams[stream_id];
+  uint8_t stream_tag = hda_stream->stream_tag;
+  if (stream->params.type == NK_SOUND_DEV_INPUT_STREAM) {
+    dev->input_stream_tags[stream_tag] = NULL;
+  } else {
+    dev->output_stream_tags[stream_tag] = NULL;
+  }
+  dev->streams[stream_id] = NULL;
+  DEBUG("Stream id %d and stream tag %d becomes avaliable\n", stream_id, stream_tag);
+
+  // set current_stream to 255 (or -1) to indicate that no stream is currently running
+  dev->current_stream = 255;
+
+  // free stream
+  free(hda_stream);
+  DEBUG("Freed stream %d at 0x%016lx\n", stream_id, hda_stream);
+
+  return 0;
+}
+
 int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
                            uint32_t params_size) {
 
@@ -414,7 +457,7 @@ int hda_stop_stream(void *state, struct nk_sound_dev_stream *stream) {
     return 0;
   }
 
-  DEBUG("Stopping stream %d", stream_id);
+  DEBUG("Stopping stream %d\n", stream_id);
 
   sdnctl_t sd_control;
   read_sd_control(dev, &sd_control, stream_id);
@@ -2002,3 +2045,22 @@ static struct shell_cmd_impl stop_stream_impl = {
     .handler = handle_stop_stream,
 };
 nk_register_shell_cmd(stop_stream_impl);
+
+static int handle_close_stream(char *buf, void *priv) {
+  uint64_t stream_id;
+  sscanf(buf, "close-stream %d", &stream_id);
+
+  struct nk_sound_dev_stream *stream = &hda_dev->streams[stream_id]->stream;
+  hda_close_stream(hda_dev, stream);
+
+  nk_vc_printf("Closing stream %d\n", stream_id);
+
+  return 0;
+}
+
+static struct shell_cmd_impl close_stream_impl = {
+    .cmd = "close-stream",
+    .help_str = "close-stream stream_id",
+    .handler = handle_close_stream,
+};
+nk_register_shell_cmd(close_stream_impl);
