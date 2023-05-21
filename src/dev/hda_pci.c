@@ -1631,7 +1631,7 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
   write_sd_control(dev, &sd_control, stream_id);
 
   // ********** IMPORTANT NOTE **********
-  // While testing, we found that the version of QEMU on Moore (version 2.5.0)
+  // While testing, we found that the version of QEMU on Moore (version 4.1.1)
   // seems to have a bug with its implementation of the Intel HDA device.
   //
   // More specifically, the srst big in the SDnCTL register does not ever get
@@ -1655,10 +1655,10 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
   } while (sd_control.srst != 1);
 
   // =================================================================
-  // Uncomment the three lines below if using QEMU 2.5.0
+  // Uncomment the three lines below if using QEMU 2.5.0 or QEMU 4.1.1
 
   // do {
-  //   read_sd_control(dev, &sd_control);
+  //   read_sd_control(dev, &sd_control, stream_id);
   // } while (sd_control.srst == 1);
 
   // =================================================================
