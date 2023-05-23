@@ -78,12 +78,12 @@ struct nk_sound_dev *nk_sound_dev_find(char *name) {
   }
 }
 
-int nk_sound_dev_get_avaiable_modes(struct nk_sound_dev *dev,
+int nk_sound_dev_get_available_modes(struct nk_sound_dev *dev,
                                     struct nk_sound_dev_params params[],
                                     uint32_t params_size) {
   struct nk_dev *d = (struct nk_dev *)(&(dev->dev));
   struct nk_sound_dev_int *di = (struct nk_sound_dev_int *)(d->interface);
-  return di->get_avaiable_modes(d->state, params, params_size);
+  return di->get_available_modes(d->state, params, params_size);
 }
 
 struct nk_sound_dev_stream *

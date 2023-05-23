@@ -312,7 +312,7 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
   return 0;
 }
 
-int hda_get_avaiable_modes(void *state, struct nk_sound_dev_params params[],
+int hda_get_available_modes(void *state, struct nk_sound_dev_params params[],
                            uint32_t params_size) {
 
   DEBUG("Getting available modes on HDA device\n");
@@ -621,12 +621,14 @@ static struct list_head dev_list;
 
 // sounddev interface
 static struct nk_sound_dev_int ops = {
-    .get_avaiable_modes = hda_get_avaiable_modes,
+    .get_available_modes = hda_get_available_modes,
     .open_stream = hda_open_stream,
     .close_stream = hda_close_stream,
     .write_to_stream = hda_write_to_stream,
     .read_from_stream = hda_read_from_stream,
     .get_stream_params = hda_get_stream_params,
+    .play_stream = hda_play_stream,
+    .stop_stream = hda_stop_stream,
 };
 
 // ========== METHODS ==========
