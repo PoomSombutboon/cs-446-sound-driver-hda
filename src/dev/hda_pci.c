@@ -313,7 +313,7 @@ int hda_close_stream(void *state, struct nk_sound_dev_stream *stream) {
 }
 
 int hda_get_available_modes(void *state, struct nk_sound_dev_params params[],
-                           uint32_t params_size) {
+                            uint32_t params_size) {
 
   DEBUG("Getting available modes on HDA device\n");
 
@@ -334,15 +334,14 @@ int hda_get_available_modes(void *state, struct nk_sound_dev_params params[],
   list_for_each(curmode, &(dev->available_modes_list)) {
     struct available_mode *mode =
         list_entry(curmode, struct available_mode, node);
-    params[i++] = mode->params;
-
-    if (i == params_size) {
-      break;
+    if (i < params_size) {
+      params[i] = mode->params;
     }
+    i++;
   }
 
   DEBUG("Found %d available modes on HDA device %d\n", i, dev->pci_dev->num);
-  return 0;
+  return i;
 }
 
 int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
