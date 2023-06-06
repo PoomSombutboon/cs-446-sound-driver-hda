@@ -361,6 +361,11 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
     return -1;
   }
 
+  if ((uint64_t)src & 0x7f) {
+    ERROR("Audio buffer is not 128-byte aligned\n");
+    return -1;
+  }
+
   struct hda_pci_dev *dev = (struct hda_pci_dev *)state;
   uint8_t stream_id = stream->stream_id;
 
