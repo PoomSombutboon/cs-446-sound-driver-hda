@@ -73,8 +73,9 @@ static int reset_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
 static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
-static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
-                          uint8_t *src, uint64_t len);
+static int initialize_bdl(
+    struct hda_pci_dev *dev, uint8_t stream_id, uint8_t *src, uint64_t len,
+    void (*callback)(nk_sound_dev_status_t status, void *state), void *state);
 
 static int set_output_stream(struct hda_pci_dev *dev, uint8_t stream_id);
 
@@ -210,7 +211,7 @@ hda_open_stream(void *state, struct nk_sound_dev_params *params) {
 
   DEBUG("INITIATE: initialize_bdl()\n");
   struct audio_data audio = create_empty_audio(params);
-  if (initialize_bdl(dev, stream_id, audio.buffer, audio.size)) {
+  if (initialize_bdl(dev, stream_id, audio.buffer, audio.size, 0, 0)) {
     ERROR("FAILED: initialize_bdl()\n");
     return NULL;
   }
@@ -376,7 +377,7 @@ int hda_write_to_stream(void *state, struct nk_sound_dev_stream *stream,
 
   // initialize BDL
   DEBUG("Initiate BDL initialization\n");
-  if (initialize_bdl(dev, stream_id, src, len)) {
+  if (initialize_bdl(dev, stream_id, src, len, callback, context)) {
     ERROR("BDL initialization failed\n");
     return -1;
   }
@@ -540,13 +541,26 @@ static int handler(excp_entry_t *e, excp_vec_t v, void *priv_data) {
     // change freed pointer to NULL
     hda_stream->bdls[cur_index] = NULL;
 
+    // call the callback
+    void (*callback)(nk_sound_dev_status_t, void *) =
+        hda_stream->callbacks[cur_index].callback;
+    void *state = hda_stream->callbacks[cur_index].context;
+    if (callback) {
+      nk_sound_dev_status_t status = NK_SOUND_DEV_STATUS_SUCCESS;
+      callback(status, state);
+    }
+
+    // reset the callback fields
+    hda_stream->callbacks[cur_index].callback = 0;
+    hda_stream->callbacks[cur_index].context = 0;
+
     // check if current BDL is the last one in the ring buffer; if there
     // it is, create a new empty stream and insert it into the ring buffer
     if (hda_stream->bdls_length == 1) {
       DEBUG("Current BDL is the last one in the ring buffer, create a new "
             "empty BDL\n");
       struct audio_data audio = create_empty_audio(&hda_stream->stream.params);
-      if (initialize_bdl(dev, cur_stream_id, audio.buffer, audio.size)) {
+      if (initialize_bdl(dev, cur_stream_id, audio.buffer, audio.size, 0, 0)) {
         ERROR("Failed to create new empty BDL\n");
         return -1;
       }
@@ -1713,8 +1727,9 @@ static int configure_stream(struct hda_pci_dev *dev, uint8_t stream_id) {
   return 0;
 }
 
-static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
-                          uint8_t *src, uint64_t len) {
+static int initialize_bdl(
+    struct hda_pci_dev *dev, uint8_t stream_id, uint8_t *src, uint64_t len,
+    void (*callback)(nk_sound_dev_status_t status, void *state), void *state) {
 
   struct hda_stream_info *hda_stream = dev->streams[stream_id];
 
@@ -1776,6 +1791,10 @@ static int initialize_bdl(struct hda_pci_dev *dev, uint8_t stream_id,
   // update size and LVI for this BDL
   hda_stream->bdls_size[cur_index] = len;
   hda_stream->bdls_lvi[cur_index] = index - 1;
+
+  // add callback function
+  hda_stream->callbacks[cur_index].callback = callback;
+  hda_stream->callbacks[cur_index].context = (uint64_t *)state;
 
   return 0;
 }

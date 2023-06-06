@@ -498,6 +498,12 @@ typedef struct {
   bdle_t buf[MAX_BDL_ENTIRES];
 } __attribute__((aligned(128))) bdl_t;
 
+// struct to store callbacks and their contexts
+typedef struct hda_pci_callback {
+  void (*callback)(nk_sound_dev_status_t, void *);
+  uint64_t *context;
+} hda_pci_callback_t;
+
 struct hda_stream_info {
   struct nk_sound_dev_stream stream;
 
@@ -507,6 +513,9 @@ struct hda_stream_info {
   uint8_t bdls_lvi[HDA_MAX_NUM_OF_BDLS];
   uint8_t bdls_start_index;
   uint8_t bdls_length;
+
+  // store callback into ring buffer
+  hda_pci_callback_t callbacks[HDA_MAX_NUM_OF_BDLS];
 
   // This is one of the 30 possible stream numbers defined in section 3.3.2 of
   // the specification. There is a maximum of 30 possible streams that can be
